@@ -6,6 +6,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    # Admin
+    admin_jid: str = ""
+
     # Evolution API
     evo_api_key: str = ""
     evo_api_url: str = "http://localhost:8080"

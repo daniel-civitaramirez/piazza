@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy import select
 
+from piazza.core.exceptions import UNAPPROVED_GROUP_RESPONSE
 from piazza.db.models.injection_log import InjectionLog
+from piazza.db.repositories.group import get_or_create_group
 from piazza.messaging.whatsapp.schemas import Message
 from piazza.workers.process_message import process_message
 
@@ -46,6 +48,60 @@ def mock_agent_runner():
         ),
     ):
         yield agent
+
+
+# ---------- Approval gate tests ----------
+
+
+class TestApprovalGate:
+    @pytest.mark.asyncio
+    async def test_unapproved_group_rejected(
+        self, db_session, redis_client, mock_agent_runner
+    ):
+        """A pending group gets the unapproved response."""
+        group, _ = await get_or_create_group(db_session, "120363099@g.us")
+        group.approval_status = "pending"
+        await db_session.flush()
+
+        msg = _make_message("hello")
+        msg.group_jid = "120363099@g.us"
+        response = await process_message(msg, db_session, redis_client)
+        assert response == UNAPPROVED_GROUP_RESPONSE
+        mock_agent_runner.run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejected_group_rejected(
+        self, db_session, redis_client, mock_agent_runner
+    ):
+        """A rejected group gets the unapproved response."""
+        group, _ = await get_or_create_group(db_session, "120363099@g.us")
+        group.approval_status = "rejected"
+        await db_session.flush()
+
+        msg = _make_message("hello")
+        msg.group_jid = "120363099@g.us"
+        response = await process_message(msg, db_session, redis_client)
+        assert response == UNAPPROVED_GROUP_RESPONSE
+        mock_agent_runner.run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_approved_group_proceeds(
+        self, db_session, redis_client, mock_agent_runner
+    ):
+        """An approved group reaches the agent pipeline."""
+        group, _ = await get_or_create_group(db_session, "120363099@g.us")
+        group.approval_status = "approved"
+        await db_session.flush()
+
+        msg = _make_message("help me")
+        msg.group_jid = "120363099@g.us"
+        with patch(
+            "piazza.workers.process_message.screen_for_injection",
+            return_value=("help me", False, 0.0),
+        ):
+            response = await process_message(msg, db_session, redis_client)
+        mock_agent_runner.run.assert_called_once()
+        assert response == "agent response"
 
 
 # ---------- Agent pipeline tests ----------

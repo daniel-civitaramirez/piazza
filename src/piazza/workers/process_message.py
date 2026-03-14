@@ -18,7 +18,11 @@ from piazza.config.constants import (
     CIRCUIT_BREAKER_WINDOW,
 )
 from piazza.core.encryption import hash_phone
-from piazza.core.exceptions import FLAGGED_RESPONSE, GENERIC_ERROR_RESPONSE
+from piazza.core.exceptions import (
+    FLAGGED_RESPONSE,
+    GENERIC_ERROR_RESPONSE,
+    UNAPPROVED_GROUP_RESPONSE,
+)
 from piazza.db.models.injection_log import InjectionLog
 from piazza.db.repositories.group import get_or_create_group
 from piazza.db.repositories.member import get_active_members, get_or_create_member
@@ -125,7 +129,16 @@ async def process_message(
 
     try:
         # 1. Setup
-        group = await get_or_create_group(session, message.group_jid)
+        group, _ = await get_or_create_group(session, message.group_jid)
+
+        if group.approval_status != "approved":
+            logger.info(
+                "unapproved_group_rejected",
+                group_jid=message.group_jid,
+                status=group.approval_status,
+            )
+            return UNAPPROVED_GROUP_RESPONSE
+
         member = await get_or_create_member(
             session, group.id, message.sender_jid, message.sender_name,
         )

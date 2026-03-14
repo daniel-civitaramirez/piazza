@@ -16,6 +16,10 @@ TOO_MANY_ACTIONS_RESPONSE = (
     "I can handle up to 5 tasks per message. "
     "Please split your requests into smaller messages."
 )
+UNAPPROVED_GROUP_RESPONSE = (
+    "This group hasn't been approved yet. "
+    "The admin has been notified and will review it shortly."
+)
 
 
 class ClassificationError(PiazzaError):

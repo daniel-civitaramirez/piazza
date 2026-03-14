@@ -80,7 +80,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     # Log both user message and bot response to message_log (best-effort)
     try:
         async with AsyncSessionFactory() as session:
-            group = await get_or_create_group(session, message.group_jid)
+            group, _ = await get_or_create_group(session, message.group_jid)
             member = await get_or_create_member(
                 session, group.id, message.sender_jid, message.sender_name
             )

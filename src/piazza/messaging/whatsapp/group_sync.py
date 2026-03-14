@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import structlog
 
+from piazza.admin.notify import notify_admin_new_group
+from piazza.config.settings import settings
+from piazza.core.encryption import encrypt
 from piazza.db.engine import AsyncSessionFactory
 from piazza.db.repositories.group import get_or_create_group
 from piazza.db.repositories.member import (
@@ -45,13 +48,17 @@ async def handle_group_upsert(raw: dict) -> None:
 
     try:
         async with AsyncSessionFactory() as session:
-            group = await get_or_create_group(session, data.id)
+            group, was_created = await get_or_create_group(session, data.id)
 
-            # Populate group name if available
-            if data.subject and group.name_encrypted is None:
-                # Store subject as-is for now; encryption can be added later
-                # if needed for the group name field.
-                pass  # name_encrypted requires encryption; skip for now
+            # Store group subject (encrypted) if encryption key is configured
+            if (
+                data.subject
+                and group.name_encrypted is None
+                and settings.encryption_key
+            ):
+                group.name_encrypted = encrypt(
+                    data.subject, settings.encryption_key_bytes
+                )
 
             synced = 0
             for participant in data.participants:
@@ -69,6 +76,18 @@ async def handle_group_upsert(raw: dict) -> None:
                 subject=data.subject,
                 members_synced=synced,
             )
+
+            # Notify admin of new pending group (after commit)
+            if was_created and group.approval_status == "pending":
+                await notify_admin_new_group(
+                    group_jid=data.id,
+                    subject=data.subject,
+                    participant_jids=[
+                        p.id
+                        for p in data.participants
+                        if p.id.endswith("@s.whatsapp.net")
+                    ],
+                )
     except Exception:
         logger.exception("group_upsert_error", group_jid=data.id)
 
@@ -88,7 +107,10 @@ async def handle_group_participants_update(raw: dict) -> None:
 
     try:
         async with AsyncSessionFactory() as session:
-            group = await get_or_create_group(session, data.group_jid)
+            group, _ = await get_or_create_group(session, data.group_jid)
+
+            if group.approval_status == "rejected":
+                return
 
             # Build a JID -> pushName mapping from participantsData (if available)
             name_map: dict[str, str | None] = {}
@@ -146,7 +168,11 @@ async def learn_display_name(
     """
     try:
         async with AsyncSessionFactory() as session:
-            group = await get_or_create_group(session, group_jid)
+            group, _ = await get_or_create_group(session, group_jid)
+
+            if group.approval_status == "rejected":
+                return
+
             await get_or_create_member_by_jid(
                 session, group.id, sender_jid, display_name=push_name
             )

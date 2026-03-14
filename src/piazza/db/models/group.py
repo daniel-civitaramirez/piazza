@@ -22,6 +22,9 @@ class Group(TimestampMixin, Base):
     timezone: Mapped[str] = mapped_column(Text, default="UTC")
     language: Mapped[str] = mapped_column(Text, default="en")
     settings: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    approval_status: Mapped[str] = mapped_column(
+        Text, default="pending", server_default="pending"
+    )
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
