@@ -1,0 +1,6 @@
+[
+  "ignore\\s+(?:all\\s+)?(?:previous|above|prior|earlier)\\s+(?:instructions|prompts|rules|directives|guidelines)",
+  "you\\s+are\\s+now\\s+(?:a|an|the)?",
+  "act\\s+as\\s+(?:a|an|if|though)?",
+  "pretend\\s+(?:to\\s+be|you\\s+are|that)"
+]

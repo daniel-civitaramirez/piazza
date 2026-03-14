@@ -1,0 +1,130 @@
+"""Tests for reminder repository."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from piazza.db.repositories.reminder import (
+    cancel_reminder,
+    create_reminder,
+    get_active_reminders,
+    get_due_reminders,
+    snooze_reminder,
+)
+
+
+class TestCreateReminder:
+    @pytest.mark.asyncio
+    async def test_creates_active(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        reminder = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "test reminder", trigger,
+        )
+        assert reminder.status == "active"
+        assert reminder.message == "test reminder"
+
+
+class TestGetActiveReminders:
+    @pytest.mark.asyncio
+    async def test_excludes_cancelled(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "first", trigger,
+        )
+        r2 = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "second", trigger + timedelta(hours=1),
+        )
+        r2.status = "cancelled"
+        await db_session.flush()
+
+        active = await get_active_reminders(db_session, sample_group.group_id)
+        assert len(active) == 1
+        assert active[0].message == "first"
+
+    @pytest.mark.asyncio
+    async def test_ordered_by_trigger_at(self, db_session, sample_group):
+        now = datetime.now(timezone.utc)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "later", now + timedelta(hours=2),
+        )
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "sooner", now + timedelta(hours=1),
+        )
+        active = await get_active_reminders(db_session, sample_group.group_id)
+        assert active[0].message == "sooner"
+
+
+class TestGetDueReminders:
+    @pytest.mark.asyncio
+    async def test_returns_past_due(self, db_session, sample_group):
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "overdue", past,
+        )
+        due = await get_due_reminders(db_session, datetime.now(timezone.utc))
+        assert len(due) == 1
+
+    @pytest.mark.asyncio
+    async def test_excludes_future(self, db_session, sample_group):
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "future", future,
+        )
+        due = await get_due_reminders(db_session, datetime.now(timezone.utc))
+        assert len(due) == 0
+
+
+class TestCancelReminder:
+    @pytest.mark.asyncio
+    async def test_cancel_valid(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "cancel me", trigger,
+        )
+        result = await cancel_reminder(db_session, sample_group.group_id, 1)
+        assert result is not None
+        assert result.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_out_of_range(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "only one", trigger,
+        )
+        result = await cancel_reminder(db_session, sample_group.group_id, 5)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_zero_returns_none(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "item", trigger,
+        )
+        result = await cancel_reminder(db_session, sample_group.group_id, 0)
+        assert result is None
+
+
+class TestSnoozeReminder:
+    @pytest.mark.asyncio
+    async def test_updates_trigger_at(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        reminder = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "snooze me", trigger,
+        )
+        new_time = trigger + timedelta(hours=1)
+        snoozed = await snooze_reminder(db_session, reminder.id, new_time)
+        assert snoozed.trigger_at == new_time
+        assert snoozed.status == "active"

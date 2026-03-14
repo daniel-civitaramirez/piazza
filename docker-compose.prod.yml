@@ -1,0 +1,126 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  evolution-api:
+    image: atypicai/evolution-api:v2.2.3
+    environment:
+      - AUTHENTICATION_API_KEY=${EVO_API_KEY}
+      - WEBHOOK_GLOBAL_URL=http://app:8000/webhook
+      - WEBHOOK_GLOBAL_ENABLED=true
+      - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=false
+    volumes:
+      - evolution_data:/evolution/instances
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/manager || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      - EVO_API_KEY=${EVO_API_KEY}
+      - EVO_API_URL=http://evolution-api:8080
+      - EVO_INSTANCE_NAME=${EVO_INSTANCE_NAME}
+      - BOT_JID=${BOT_JID}
+      - SUPABASE_DB_URL=${SUPABASE_DB_URL}
+      - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_URL=http://ollama:11434
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - INJECTION_PATTERNS_PATH=/app/config/injection_patterns.json
+      - OPENEXCHANGERATES_KEY=${OPENEXCHANGERATES_KEY}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - HF_HOME=/hf_cache
+    volumes:
+      - ./config/injection_patterns.json:/app/config/injection_patterns.json:ro
+      - hf_cache:/hf_cache
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      evolution-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["arq", "piazza.workers.jobs.WorkerSettings"]
+    environment:
+      - EVO_API_KEY=${EVO_API_KEY}
+      - EVO_API_URL=http://evolution-api:8080
+      - EVO_INSTANCE_NAME=${EVO_INSTANCE_NAME}
+      - BOT_JID=${BOT_JID}
+      - SUPABASE_DB_URL=${SUPABASE_DB_URL}
+      - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_URL=http://ollama:11434
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - INJECTION_PATTERNS_PATH=/app/config/injection_patterns.json
+      - OPENEXCHANGERATES_KEY=${OPENEXCHANGERATES_KEY}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - HF_HOME=/hf_cache
+    volumes:
+      - ./config/injection_patterns.json:/app/config/injection_patterns.json:ro
+      - hf_cache:/hf_cache
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  ollama_data:
+  evolution_data:
+  caddy_data:
+  caddy_config:
+  hf_cache:

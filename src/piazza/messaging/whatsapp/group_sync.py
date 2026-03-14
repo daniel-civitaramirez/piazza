@@ -1,0 +1,160 @@
+"""Group membership sync handlers for Evolution API webhook events.
+
+Three mechanisms keep the members table in sync with WhatsApp:
+
+1. handle_group_upsert() — fires when Piazza is added to a group.
+   Populates all existing group members (JIDs only, phone numbers as temp names).
+
+2. handle_group_participants_update() — fires when members join/leave/promote/demote.
+   Keeps the roster current over time.
+
+3. learn_display_name() — runs on every group message (before the mention gate).
+   Learns WhatsApp display names (pushName) as members chat.
+"""
+
+from __future__ import annotations
+
+import structlog
+
+from piazza.db.engine import AsyncSessionFactory
+from piazza.db.repositories.group import get_or_create_group
+from piazza.db.repositories.member import (
+    deactivate_member,
+    get_or_create_member_by_jid,
+)
+from piazza.messaging.whatsapp.schemas import (
+    GroupParticipantsUpdateData,
+    GroupUpsertData,
+)
+
+logger = structlog.get_logger()
+
+
+async def handle_group_upsert(raw: dict) -> None:
+    """Handle groups.upsert — bot was added to a WhatsApp group.
+
+    Creates the group record and member records for all existing participants.
+    Display names are not available from this event; phone numbers are used
+    as temporary names until learned from messages.
+    """
+    try:
+        data = GroupUpsertData(**raw.get("data", {}))
+    except Exception:
+        logger.exception("group_upsert_parse_error")
+        return
+
+    try:
+        async with AsyncSessionFactory() as session:
+            group = await get_or_create_group(session, data.id)
+
+            # Populate group name if available
+            if data.subject and group.name_encrypted is None:
+                # Store subject as-is for now; encryption can be added later
+                # if needed for the group name field.
+                pass  # name_encrypted requires encryption; skip for now
+
+            synced = 0
+            for participant in data.participants:
+                jid = participant.id
+                if jid and jid.endswith("@s.whatsapp.net"):
+                    await get_or_create_member_by_jid(
+                        session, group.id, jid
+                    )
+                    synced += 1
+
+            await session.commit()
+            logger.info(
+                "group_upsert_synced",
+                group_jid=data.id,
+                subject=data.subject,
+                members_synced=synced,
+            )
+    except Exception:
+        logger.exception("group_upsert_error", group_jid=data.id)
+
+
+async def handle_group_participants_update(raw: dict) -> None:
+    """Handle group-participants.update — member joined, left, promoted, or demoted.
+
+    - add: creates member record (or re-activates if they rejoined)
+    - remove: marks member as inactive (preserves expense history)
+    - promote/demote: logged only, no DB changes needed for expenses
+    """
+    try:
+        data = GroupParticipantsUpdateData(**raw.get("data", {}))
+    except Exception:
+        logger.exception("group_participants_update_parse_error")
+        return
+
+    try:
+        async with AsyncSessionFactory() as session:
+            group = await get_or_create_group(session, data.group_jid)
+
+            # Build a JID -> pushName mapping from participantsData (if available)
+            name_map: dict[str, str | None] = {}
+            for pd in data.participants_data:
+                name_map[pd.jid] = pd.push_name
+
+            if data.action == "add":
+                for jid in data.participants:
+                    if jid and jid.endswith("@s.whatsapp.net"):
+                        await get_or_create_member_by_jid(
+                            session,
+                            group.id,
+                            jid,
+                            display_name=name_map.get(jid),
+                        )
+
+            elif data.action == "remove":
+                for jid in data.participants:
+                    if jid and jid.endswith("@s.whatsapp.net"):
+                        await deactivate_member(session, group.id, jid)
+
+            else:
+                # promote / demote — log only
+                logger.info(
+                    "group_participants_action",
+                    group_jid=data.group_jid,
+                    action=data.action,
+                    participants=data.participants,
+                )
+                return
+
+            await session.commit()
+            logger.info(
+                "group_participants_updated",
+                group_jid=data.group_jid,
+                action=data.action,
+                count=len(data.participants),
+            )
+    except Exception:
+        logger.exception(
+            "group_participants_update_error",
+            group_jid=data.group_jid,
+            action=data.action,
+        )
+
+
+async def learn_display_name(
+    group_jid: str, sender_jid: str, push_name: str
+) -> None:
+    """Learn a member's display name from any group message.
+
+    This runs on every messages.upsert event (before the mention gate)
+    so we learn WhatsApp display names as members chat, even if they
+    never @mention Piazza.
+    """
+    try:
+        async with AsyncSessionFactory() as session:
+            group = await get_or_create_group(session, group_jid)
+            await get_or_create_member_by_jid(
+                session, group.id, sender_jid, display_name=push_name
+            )
+            await session.commit()
+    except Exception:
+        # Fire-and-forget — must never block the webhook
+        logger.exception(
+            "learn_display_name_error",
+            group_jid=group_jid,
+            sender_jid=sender_jid,
+        )

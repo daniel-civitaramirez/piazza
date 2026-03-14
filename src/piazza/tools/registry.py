@@ -1,0 +1,436 @@
+"""Tool definitions and executor.
+
+Tools are defined in Anthropic format (canonical). The OpenSourceAgent converts
+to OpenAI format internally. Each tool maps to an existing handler function.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
+import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from piazza.core.exceptions import PiazzaError
+
+from piazza.tools.expenses.handler import (
+    handle_expense_add,
+    handle_expense_balance,
+    handle_expense_delete,
+    handle_expense_list,
+    handle_expense_settle,
+    handle_expense_update,
+)
+from piazza.tools.itinerary.handler import (
+    handle_itinerary_add,
+    handle_itinerary_remove,
+    handle_itinerary_show,
+)
+from piazza.tools.notes.handler import (
+    handle_note_delete,
+    handle_note_find,
+    handle_note_list,
+    handle_note_save,
+)
+from piazza.tools.reminders.handler import (
+    handle_reminder_cancel,
+    handle_reminder_list,
+    handle_reminder_set,
+    handle_reminder_snooze,
+    handle_set_timezone,
+)
+from piazza.tools.schemas import Entities
+from piazza.tools.status.status import handle_status
+
+logger = structlog.get_logger()
+
+HandlerFunc = Callable[
+    [AsyncSession, uuid.UUID, uuid.UUID, Entities],
+    Awaitable[str],
+]
+
+
+@dataclass
+class ToolResult:
+    """Structured result from a tool handler."""
+
+    success: bool
+    response_text: str
+
+
+# --- Tool definitions (Anthropic format) ---
+
+AGENT_TOOLS: list[dict] = [
+    {
+        "name": "add_expense",
+        "description": (
+            "Record a shared expense."
+            " Set paid_by to the sender's name unless someone else paid."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number",
+                    "description": "Amount in major currency units",
+                },
+                "currency": {
+                    "type": "string",
+                    "description": "Currency code (EUR, USD, GBP, etc.)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "What the expense was for",
+                },
+                "paid_by": {
+                    "type": "string",
+                    "description": (
+                        "Display name of the payer"
+                        " (use the sender's name if they paid)"
+                    ),
+                },
+                "participants": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Display names of everyone in the split"
+                        " EXCEPT the payer (payer is auto-included)"
+                    ),
+                },
+            },
+            "required": ["amount", "paid_by", "participants"],
+        },
+    },
+    {
+        "name": "get_balances",
+        "description": "Show who owes whom in the group.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "settle_expense",
+        "description": (
+            "Record a settlement payment between members,"
+            " or show settle-up suggestions if no amount given."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "participants": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "The member being paid (required when amount is given)",
+                },
+                "amount": {
+                    "type": "number",
+                    "description": "Settlement amount",
+                },
+                "currency": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "delete_expense",
+        "description": "Delete the most recent expense, optionally matching a description.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Description to match",
+                },
+            },
+        },
+    },
+    {
+        "name": "update_expense",
+        "description": "Update a previously logged expense.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Text to identify the expense to update",
+                },
+                "amount": {
+                    "type": "number",
+                    "description": "New amount (if changing)",
+                },
+                "currency": {
+                    "type": "string",
+                    "description": "New currency code (if changing)",
+                },
+                "new_description": {
+                    "type": "string",
+                    "description": "New description (if renaming)",
+                },
+                "paid_by": {
+                    "type": "string",
+                    "description": "New payer display name (if changing who paid)",
+                },
+                "participants": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "New participant list — everyone in the split"
+                        " EXCEPT the payer (if changing split)"
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "list_expenses",
+        "description": "List recent expenses for the group.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_reminder",
+        "description": "Set a reminder for the group.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What to remind about",
+                },
+                "datetime_raw": {
+                    "type": "string",
+                    "description": (
+                        "When, in natural language"
+                        " (e.g. 'tomorrow 6am', 'every Monday 9am')"
+                    ),
+                },
+            },
+            "required": ["description", "datetime_raw"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": "List active reminders for the group.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cancel_reminder",
+        "description": "Cancel a reminder by its list number or by matching text.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reminder_number": {
+                    "type": "integer",
+                    "description": "Position number from list_reminders (e.g. 2 for #2)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Text to match against the reminder message (e.g. 'dentist')",
+                },
+            },
+        },
+    },
+    {
+        "name": "snooze_reminder",
+        "description": "Snooze a reminder by its list number or by matching text.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reminder_number": {
+                    "type": "integer",
+                    "description": "Position number from list_reminders (e.g. 2 for #2)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Text to match against the reminder message (e.g. 'dentist')",
+                },
+                "datetime_raw": {
+                    "type": "string",
+                    "description": "Snooze duration (e.g. '1h', '30m')",
+                },
+            },
+            "required": ["datetime_raw"],
+        },
+    },
+    {
+        "name": "add_itinerary",
+        "description": "Add one or more items to the group's shared itinerary.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": "Structured itinerary items to add",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Item title"},
+                            "item_type": {
+                                "type": "string",
+                                "enum": ["flight", "hotel", "restaurant", "activity", "transport"],
+                                "description": "Type of itinerary item",
+                            },
+                            "start_at": {
+                                "type": "string",
+                                "description": "Start datetime in ISO 8601 format",
+                            },
+                            "end_at": {
+                                "type": "string",
+                                "description": "End datetime in ISO 8601 format",
+                            },
+                            "location": {"type": "string", "description": "Location or venue"},
+                            "notes": {"type": "string", "description": "Additional notes"},
+                        },
+                        "required": ["title"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
+    {
+        "name": "show_itinerary",
+        "description": "Show the group's itinerary.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "remove_itinerary",
+        "description": "Remove an item from the itinerary.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Identifying text of the item to remove",
+                },
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "save_note",
+        "description": "Save information to the group's shared knowledge base.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "The information to save",
+                },
+                "tag": {
+                    "type": "string",
+                    "description": (
+                        "Short label/category"
+                        " (e.g. 'wifi password', 'booking ref')"
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "find_note",
+        "description": "Search the group's saved notes and knowledge base.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Search keywords",
+                },
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "list_notes",
+        "description": "List all saved notes for the group.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "delete_note",
+        "description": "Delete a note by its content or tag.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Identifying text of the note to delete",
+                },
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "set_timezone",
+        "description": "Set the group's timezone for reminders.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Timezone name"
+                        " (e.g. 'Europe/Paris', 'America/New_York')"
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "get_status",
+        "description": "Show group statistics (expense count, active reminders, etc.).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+
+# --- Tool registry: maps tool names to handler functions ---
+
+TOOL_REGISTRY: dict[str, HandlerFunc] = {
+    "add_expense": handle_expense_add,
+    "get_balances": handle_expense_balance,
+    "settle_expense": handle_expense_settle,
+    "delete_expense": handle_expense_delete,
+    "update_expense": handle_expense_update,
+    "list_expenses": handle_expense_list,
+    "set_reminder": handle_reminder_set,
+    "list_reminders": handle_reminder_list,
+    "cancel_reminder": handle_reminder_cancel,
+    "snooze_reminder": handle_reminder_snooze,
+    "add_itinerary": handle_itinerary_add,
+    "show_itinerary": handle_itinerary_show,
+    "remove_itinerary": handle_itinerary_remove,
+    "save_note": handle_note_save,
+    "find_note": handle_note_find,
+    "list_notes": handle_note_list,
+    "delete_note": handle_note_delete,
+    "set_timezone": handle_set_timezone,
+    "get_status": handle_status,
+}
+
+
+async def execute_tool(
+    name: str,
+    arguments: dict,
+    session: AsyncSession,
+    group_id: uuid.UUID,
+    member_id: uuid.UUID,
+) -> ToolResult:
+    """Execute a tool call by mapping it to a handler function."""
+    handler = TOOL_REGISTRY.get(name)
+    if handler is None:
+        return ToolResult(success=False, response_text=f"Unknown tool: {name}")
+
+    try:
+        entities = Entities(**arguments)
+        response_text = await handler(session, group_id, member_id, entities)
+        return ToolResult(success=True, response_text=response_text)
+    except PiazzaError as exc:
+        logger.warning("tool_domain_error", tool=name, error=str(exc))
+        return ToolResult(success=False, response_text=str(exc))
+    except Exception:
+        logger.exception("tool_execution_error", tool=name)
+        return ToolResult(
+            success=False,
+            response_text=f"Failed to execute {name}. Please try again.",
+        )
