@@ -15,11 +15,6 @@ services:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:11434/api/tags || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   evolution-api:
@@ -28,11 +23,6 @@ services:
       - ./config/evolution.env
     volumes:
       - evolution_data:/evolution/instances
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/manager || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   app:
@@ -61,13 +51,11 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 30s
     depends_on:
-      redis:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
-      evolution-api:
-        condition: service_healthy
+      - redis
+      - ollama
+      - evolution-api
     restart: unless-stopped
 
   worker:
@@ -93,10 +81,8 @@ services:
       - ./config/injection_patterns.json:/app/config/injection_patterns.json:ro
       - hf_cache:/hf_cache
     depends_on:
-      redis:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
+      - redis
+      - ollama
     restart: unless-stopped
 
   caddy:
