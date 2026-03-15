@@ -16,19 +16,16 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:11434/api/tags || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
   evolution-api:
-    image: atypicai/evolution-api:v2.2.3
-    environment:
-      - AUTHENTICATION_API_KEY=${EVO_API_KEY}
-      - WEBHOOK_GLOBAL_URL=http://app:8000/webhook
-      - WEBHOOK_GLOBAL_ENABLED=true
-      - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=false
+    image: atendai/evolution-api:v2.2.3
+    env_file:
+      - ./config/evolution.env
     volumes:
       - evolution_data:/evolution/instances
     healthcheck:

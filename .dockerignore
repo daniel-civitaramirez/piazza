@@ -10,5 +10,6 @@ docs/
 .pytest_cache/
 .ruff_cache/
 config/injection_patterns.json
+config/evolution.env
 docker-compose*.yml
 Caddyfile
