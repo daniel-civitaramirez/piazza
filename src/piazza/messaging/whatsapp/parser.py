@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import structlog
 from pydantic import ValidationError
 
@@ -131,19 +129,12 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
     # Determine sender JID — in groups, participant holds the sender
     sender_jid = key.participant or key.remote_jid
 
-    # Build timestamp
-    timestamp = None
-    if data.message_timestamp:
-        timestamp = datetime.fromtimestamp(data.message_timestamp, tz=UTC)
-
     return Message(
         sender_jid=sender_jid,
         sender_name=data.push_name or sender_jid,
         group_jid=key.remote_jid,
         text=text,
         message_id=key.id or None,
-        is_mention=is_mention,
         mentioned_jids=mentioned_jids,
         reply_to_message_id=reply_to_id,
-        timestamp=timestamp,
     )

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -19,10 +17,8 @@ class Message(BaseModel):
     group_jid: str
     text: str
     message_id: str | None = None
-    is_mention: bool = False
     mentioned_jids: list[str] = []
     reply_to_message_id: str | None = None
-    timestamp: datetime | None = None
 
 
 # --- Evolution API webhook models ---

@@ -15,10 +15,10 @@ from piazza.core.exceptions import GENERIC_ERROR_RESPONSE, WhatsAppSendError
 logger = structlog.get_logger()
 
 
-# ---------- Private helpers ----------
+# ---------- Helpers ----------
 
 
-def _redis_settings() -> RedisSettings:
+def redis_settings() -> RedisSettings:
     """Build arq RedisSettings from app settings."""
     from urllib.parse import urlparse
 
@@ -136,7 +136,7 @@ async def fire_reminders_job(ctx: dict) -> int:
 
 class WorkerSettings:
     functions = [process_message_job]
-    redis_settings = _redis_settings()
+    redis_settings = redis_settings()
     max_jobs = 10
     job_timeout = 30
     retry_jobs = False  # Handlers have DB side effects; retry in-job instead

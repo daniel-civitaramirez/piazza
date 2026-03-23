@@ -8,9 +8,9 @@ from piazza.conftest import TEST_ENCRYPTION_KEY
 from piazza.core.encryption import encrypt, hash_phone
 from piazza.db.models.member import Member
 from piazza.db.repositories.member import (
+    _get_member_by_name,
     deactivate_member,
     find_member_by_name,
-    get_member_by_name,
     get_or_create_member_by_jid,
 )
 
@@ -134,16 +134,16 @@ class TestFindMemberByName:
 class TestGetMemberByName:
     @pytest.mark.asyncio
     async def test_resolve_by_name(self, db_session, sample_group):
-        member = await get_member_by_name(db_session, sample_group.group_id, "Alice")
+        member = await _get_member_by_name(db_session, sample_group.group_id, "Alice")
         assert member is not None
         assert member.display_name == "Alice"
 
     @pytest.mark.asyncio
     async def test_resolve_case_insensitive(self, db_session, sample_group):
-        member = await get_member_by_name(db_session, sample_group.group_id, "alice")
+        member = await _get_member_by_name(db_session, sample_group.group_id, "alice")
         assert member is not None
 
     @pytest.mark.asyncio
     async def test_resolve_unknown_returns_none(self, db_session, sample_group):
-        member = await get_member_by_name(db_session, sample_group.group_id, "Zara")
+        member = await _get_member_by_name(db_session, sample_group.group_id, "Zara")
         assert member is None

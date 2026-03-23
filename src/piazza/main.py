@@ -45,10 +45,10 @@ async def lifespan(app: FastAPI):
     from arq.connections import create_pool
 
     from piazza.db.engine import engine
-    from piazza.workers.jobs import _redis_settings
+    from piazza.workers.jobs import redis_settings
 
     try:
-        app.state.arq_pool = await create_pool(_redis_settings())
+        app.state.arq_pool = await create_pool(redis_settings())
         logger.info("arq_pool_initialized")
     except Exception:
         logger.warning("arq_pool_init_failed", exc_info=True)

@@ -73,7 +73,6 @@ class TestParseWebhookValid:
         assert msg.group_jid == GROUP_JID
         assert msg.sender_jid == SENDER_JID
         assert msg.sender_name == "Alice"
-        assert msg.is_mention is True
         assert BOT_JID in msg.mentioned_jids
 
     def test_reply_to_bot(self):
@@ -86,7 +85,6 @@ class TestParseWebhookValid:
         assert msg is not None
         assert msg.text == "yes I agree"
         assert msg.reply_to_message_id == "prev-msg-id-123"
-        assert msg.is_mention is False
 
     def test_mention_and_reply(self):
         raw = _make_payload(
@@ -97,7 +95,6 @@ class TestParseWebhookValid:
         )
         msg = parse_webhook(raw, BOT_JID)
         assert msg is not None
-        assert msg.is_mention is True
         assert msg.reply_to_message_id == "prev-msg-id-456"
 
     def test_message_id_extracted(self):
@@ -108,27 +105,6 @@ class TestParseWebhookValid:
         msg = parse_webhook(raw, BOT_JID)
         assert msg is not None
         assert msg.message_id == "ABC123"
-
-    def test_timestamp_parsed(self):
-        raw = _make_payload(
-            extended_text="hello",
-            mentioned_jids=[BOT_JID],
-            timestamp=1700000000,
-        )
-        msg = parse_webhook(raw, BOT_JID)
-        assert msg is not None
-        assert msg.timestamp is not None
-        assert msg.timestamp.year == 2023
-
-    def test_no_timestamp(self):
-        raw = _make_payload(
-            extended_text="hello",
-            mentioned_jids=[BOT_JID],
-            timestamp=None,
-        )
-        msg = parse_webhook(raw, BOT_JID)
-        assert msg is not None
-        assert msg.timestamp is None
 
     def test_sender_fallback_to_remote_jid(self):
         raw = _make_payload(

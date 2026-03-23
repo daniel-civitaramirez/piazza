@@ -146,7 +146,7 @@ async def deactivate_member(
     return member
 
 
-async def get_member_by_name(
+async def _get_member_by_name(
     session: AsyncSession, group_id: uuid.UUID, display_name: str
 ) -> Member | None:
     """Resolve a member by display name (case-insensitive exact match)."""
@@ -171,7 +171,7 @@ async def find_member_by_name(
     - If no match at all: (None, [])
     """
     # Try exact match first (fast path)
-    exact = await get_member_by_name(session, group_id, display_name)
+    exact = await _get_member_by_name(session, group_id, display_name)
     if exact is not None:
         return exact, []
 
