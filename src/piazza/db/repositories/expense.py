@@ -18,8 +18,6 @@ async def create_expense(
     amount_cents: int,
     currency: str,
     description: str | None,
-    category: str | None,
-    split_type: str,
 ) -> Expense:
     """Create an expense record."""
     expense = Expense(
@@ -28,8 +26,6 @@ async def create_expense(
         amount_cents=amount_cents,
         currency=currency,
         description=description,
-        category=category,
-        split_type=split_type,
     )
     session.add(expense)
     await session.flush()

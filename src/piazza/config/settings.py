@@ -31,9 +31,6 @@ class Settings(BaseSettings):
     webhook_secret: str = ""
     injection_patterns_path: str = "config/injection_patterns.json"
 
-    # External APIs (optional)
-    openexchangerates_key: str = ""
-
     # Monitoring (optional)
     sentry_dsn: str = ""
 

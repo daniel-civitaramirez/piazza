@@ -148,7 +148,7 @@ async def add_expense(
     shares = calculate_even_split(amount_cents, len(participant_ids))
 
     expense = await expense_repo.create_expense(
-        session, group_id, payer_id, amount_cents, currency, description, None, "even"
+        session, group_id, payer_id, amount_cents, currency, description
     )
     share_tuples = list(zip(participant_ids, shares))
     await expense_repo.create_expense_participants(session, expense.id, share_tuples)

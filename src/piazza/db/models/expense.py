@@ -29,8 +29,6 @@ class Expense(Base):
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(Text, default="EUR")
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    category: Mapped[str | None] = mapped_column(Text, default=None)
-    split_type: Mapped[str] = mapped_column(Text, default="even")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

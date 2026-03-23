@@ -20,7 +20,7 @@ class TestCreateExpense:
     async def test_creates_record(self, db_session, sample_group):
         expense = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            3000, "EUR", "dinner", None, "even",
+            3000, "EUR", "dinner",
         )
         assert expense.amount_cents == 3000
         assert expense.currency == "EUR"
@@ -33,7 +33,7 @@ class TestCreateExpenseParticipants:
     async def test_creates_shares(self, db_session, sample_group):
         expense = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            2000, "EUR", "taxi", None, "even",
+            2000, "EUR", "taxi",
         )
         await create_expense_participants(
             db_session, expense.id,
@@ -48,11 +48,11 @@ class TestGetExpenses:
     async def test_excludes_deleted(self, db_session, sample_group):
         e1 = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            1000, "EUR", "first", None, "even",
+            1000, "EUR", "first",
         )
         await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            2000, "EUR", "second", None, "even",
+            2000, "EUR", "second",
         )
         e1.is_deleted = True
         await db_session.flush()
@@ -65,11 +65,11 @@ class TestGetExpenses:
     async def test_ordered_most_recent_first(self, db_session, sample_group):
         e1 = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            1000, "EUR", "first", None, "even",
+            1000, "EUR", "first",
         )
         e2 = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            2000, "EUR", "second", None, "even",
+            2000, "EUR", "second",
         )
         # Ensure distinct timestamps for deterministic ordering
         from datetime import datetime, timezone
@@ -87,7 +87,7 @@ class TestDeleteLastExpense:
     async def test_soft_deletes(self, db_session, sample_group):
         await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            1000, "EUR", "lunch", None, "even",
+            1000, "EUR", "lunch",
         )
         deleted = await delete_last_expense(db_session, sample_group.group_id)
         assert deleted is not None
@@ -104,7 +104,7 @@ class TestGetExpenseShares:
     async def test_returns_tuples(self, db_session, sample_group):
         expense = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            2000, "EUR", "taxi", None, "even",
+            2000, "EUR", "taxi",
         )
         await create_expense_participants(
             db_session, expense.id,

@@ -22,30 +22,6 @@ UNAPPROVED_GROUP_RESPONSE = (
 )
 
 
-class ClassificationError(PiazzaError):
-    """LLM failed to produce a valid classification."""
-
-
-class LLMTimeoutError(PiazzaError):
-    """LLM call timed out."""
-
-
-class LLMUnavailableError(PiazzaError):
-    """LLM service is unreachable."""
-
-
-class RateLimitExceededError(PiazzaError):
-    """Request was rate-limited."""
-
-
-class InjectionDetectedError(PiazzaError):
-    """Prompt injection was detected."""
-
-
-class MemberNotFoundError(PiazzaError):
-    """Could not resolve a member by name."""
-
-
 class ExpenseError(PiazzaError):
     """Error in expense processing."""
 

@@ -34,7 +34,9 @@ async def get_or_create_member(
             member.display_name = display_name
         return member
 
-    key = settings.encryption_key_bytes if settings.encryption_key else b"\x00" * 32
+    if not settings.encryption_key:
+        raise ValueError("ENCRYPTION_KEY must be configured")
+    key = settings.encryption_key_bytes
     member = Member(
         group_id=group_id,
         wa_id_hash=wa_hash,
@@ -81,7 +83,9 @@ async def get_or_create_member_by_jid(
             member.is_active = True
         return member
 
-    key = settings.encryption_key_bytes if settings.encryption_key else b"\x00" * 32
+    if not settings.encryption_key:
+        raise ValueError("ENCRYPTION_KEY must be configured")
+    key = settings.encryption_key_bytes
     member = Member(
         group_id=group_id,
         wa_id_hash=wa_hash,

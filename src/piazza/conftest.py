@@ -27,6 +27,15 @@ def event_loop():
 
 # A fixed 32-byte key for deterministic test encryption
 TEST_ENCRYPTION_KEY = b"\x00" * 32
+TEST_ENCRYPTION_KEY_B64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+
+@pytest.fixture(autouse=True)
+def _set_encryption_key(monkeypatch):
+    """Ensure encryption_key is always set in tests."""
+    from piazza.config.settings import settings
+
+    monkeypatch.setattr(settings, "encryption_key", TEST_ENCRYPTION_KEY_B64)
 
 
 @pytest_asyncio.fixture

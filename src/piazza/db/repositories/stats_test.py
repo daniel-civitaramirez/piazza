@@ -36,7 +36,7 @@ class TestGetGroupStats:
     async def test_with_expenses(self, db_session, sample_group):
         expense = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            3000, "EUR", "dinner", None, "even",
+            3000, "EUR", "dinner",
         )
         await create_expense_participants(
             db_session, expense.id,
@@ -50,7 +50,7 @@ class TestGetGroupStats:
     async def test_deleted_expenses_excluded(self, db_session, sample_group):
         expense = await create_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
-            5000, "EUR", "deleted item", None, "even",
+            5000, "EUR", "deleted item",
         )
         expense.is_deleted = True
         await db_session.flush()

@@ -14,7 +14,6 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.core.exceptions import PiazzaError
-
 from piazza.tools.expenses.handler import (
     handle_expense_add,
     handle_expense_balance,
