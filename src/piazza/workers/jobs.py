@@ -55,7 +55,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     await client.send_typing(message.group_jid)
 
     # Small random delay to feel more human (1-3 seconds)
-    await asyncio.sleep(random.uniform(1.0, 3.0))
+    await asyncio.sleep(random.uniform(settings.human_delay_min, settings.human_delay_max))
 
     try:
         async with AsyncSessionFactory() as session:
@@ -137,11 +137,11 @@ async def fire_reminders_job(ctx: dict) -> int:
 class WorkerSettings:
     functions = [process_message_job]
     redis_settings = redis_settings()
-    max_jobs = 10
-    job_timeout = 30
+    max_jobs = settings.worker_max_jobs
+    job_timeout = settings.worker_job_timeout
     retry_jobs = False  # Handlers have DB side effects; retry in-job instead
     max_tries = 1
 
     cron_jobs = [
-        cron(fire_reminders_job, second={0, 30}),  # Every 30 seconds
+        cron(fire_reminders_job, second=settings.reminder_cron_seconds_set),
     ]

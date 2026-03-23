@@ -55,10 +55,14 @@ def _parse_response(body: dict) -> LLMResponse:
 class OpenSourceAgent(BaseAgent):
     """Agent backed by a local Ollama instance."""
 
-    def __init__(self, url: str, model: str, timeout: float = 10.0):
+    def __init__(
+        self, url: str, model: str, timeout: float, temperature: float, context_limit: int,
+    ):
+        super().__init__(context_limit=context_limit)
         self.url = f"{url.rstrip('/')}/v1/chat/completions"
         self.model = model
         self.timeout = timeout
+        self.temperature = temperature
 
     async def _generate(
         self,
@@ -72,7 +76,7 @@ class OpenSourceAgent(BaseAgent):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
-            "temperature": 0.0,
+            "temperature": self.temperature,
         }
         if tools:
             payload["tools"] = _format_tools(tools)
@@ -102,7 +106,7 @@ class OpenSourceAgent(BaseAgent):
         body = await self._post({
             "model": self.model,
             "messages": messages,
-            "temperature": 0.0,
+            "temperature": self.temperature,
         })
         return _parse_response(body)
 

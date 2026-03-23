@@ -13,15 +13,13 @@ from piazza.core.exceptions import WhatsAppSendError
 logger = structlog.get_logger()
 
 _http_client: httpx.AsyncClient | None = None
-_SEND_MAX_RETRIES = 3
-_SEND_BACKOFF_BASE = 0.5  # seconds
 
 
 def _get_client() -> httpx.AsyncClient:
     """Get or create the shared httpx client."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=10.0)
+        _http_client = httpx.AsyncClient(timeout=settings.wa_client_timeout)
     return _http_client
 
 
@@ -50,7 +48,7 @@ async def send_text(group_jid: str, text: str) -> str | None:
     payload = {"number": group_jid, "text": text}
     last_exc: Exception | None = None
 
-    for attempt in range(1, _SEND_MAX_RETRIES + 1):
+    for attempt in range(1, settings.wa_send_max_retries + 1):
         try:
             resp = await http.post(url, json=payload, headers=_headers())
             resp.raise_for_status()
@@ -72,18 +70,18 @@ async def send_text(group_jid: str, text: str) -> str | None:
                 "whatsapp_send_text_attempt_failed",
                 group_jid=group_jid,
                 attempt=attempt,
-                max_retries=_SEND_MAX_RETRIES,
+                max_retries=settings.wa_send_max_retries,
             )
-            if attempt < _SEND_MAX_RETRIES:
-                await asyncio.sleep(_SEND_BACKOFF_BASE * (2 ** (attempt - 1)))
+            if attempt < settings.wa_send_max_retries:
+                await asyncio.sleep(settings.wa_send_backoff_base * (2 ** (attempt - 1)))
 
     logger.error(
         "whatsapp_send_text_failed",
         group_jid=group_jid,
-        attempts=_SEND_MAX_RETRIES,
+        attempts=settings.wa_send_max_retries,
     )
     raise WhatsAppSendError(
-        f"Failed to send message to {group_jid} after {_SEND_MAX_RETRIES} attempts"
+        f"Failed to send message to {group_jid} after {settings.wa_send_max_retries} attempts"
     ) from last_exc
 
 

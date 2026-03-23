@@ -12,11 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from piazza.agent import get_claude_agent, get_opensource_agent
 from piazza.agent.base import AgentTimeoutError, AgentUnavailableError
 from piazza.agent.context import AgentContext
-from piazza.config.constants import (
-    CIRCUIT_BREAKER_COOLDOWN,
-    CIRCUIT_BREAKER_FAILURES,
-    CIRCUIT_BREAKER_WINDOW,
-)
+from piazza.config.settings import settings
 from piazza.core.encryption import hash_phone
 from piazza.core.exceptions import (
     FLAGGED_RESPONSE,
@@ -86,13 +82,13 @@ async def _circuit_record_failure(redis: Redis) -> None:
     now = time.time()
     pipe = redis.pipeline()
     pipe.zadd(CB_KEY, {str(now): now})
-    pipe.zremrangebyscore(CB_KEY, "-inf", now - CIRCUIT_BREAKER_WINDOW)
+    pipe.zremrangebyscore(CB_KEY, "-inf", now - settings.circuit_breaker_window)
     pipe.zcard(CB_KEY)
     results = await pipe.execute()
     failure_count = results[2]
 
-    if failure_count >= CIRCUIT_BREAKER_FAILURES:
-        await redis.set(CB_OPEN_KEY, "1", ex=CIRCUIT_BREAKER_COOLDOWN)
+    if failure_count >= settings.circuit_breaker_failures:
+        await redis.set(CB_OPEN_KEY, "1", ex=settings.circuit_breaker_cooldown)
         logger.warning("agent_circuit_breaker_opened", failures=failure_count)
 
 

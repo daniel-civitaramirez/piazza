@@ -39,13 +39,17 @@ class ClaudeAgent(BaseAgent):
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-haiku-4-5-20251001",
-        timeout: float = 15.0,
+        model: str,
+        timeout: float,
+        max_tokens: int,
+        context_limit: int,
     ):
+        super().__init__(context_limit=context_limit)
         self.client = anthropic.AsyncAnthropic(
             api_key=api_key, timeout=timeout,
         )
         self.model = model
+        self.max_tokens = max_tokens
 
     async def _generate(
         self,
@@ -55,7 +59,7 @@ class ClaudeAgent(BaseAgent):
     ) -> LLMResponse:
         kwargs: dict = {
             "model": self.model,
-            "max_tokens": 1024,
+            "max_tokens": self.max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user_content}],
         }
@@ -106,7 +110,7 @@ class ClaudeAgent(BaseAgent):
         try:
             msg = await self.client.messages.create(
                 model=self.model,
-                max_tokens=1024,
+                max_tokens=self.max_tokens,
                 system=system,
                 messages=messages,
             )

@@ -70,6 +70,9 @@ class AgentUnavailableError(Exception):
 class BaseAgent(ABC):
     """Shared agent logic: context hydration, tool loop, LLM calls."""
 
+    def __init__(self, context_limit: int):
+        self.context_limit = context_limit
+
     async def run(self, context: AgentContext) -> str:
         """Hydrate context and execute the agent loop."""
         await self._hydrate_context(context)
@@ -146,7 +149,7 @@ class BaseAgent(ABC):
         """Fetch conversation history and reply context."""
         try:
             context.recent_messages = await message_log_repo.get_recent(
-                context.session, context.group_id, limit=10,
+                context.session, context.group_id, limit=self.context_limit,
             )
         except Exception:
             logger.exception("failed_to_fetch_recent_messages")

@@ -8,7 +8,6 @@ import unicodedata
 
 import structlog
 
-from piazza.config.constants import MAX_MESSAGE_LENGTH
 from piazza.config.settings import settings
 
 logger = structlog.get_logger()
@@ -64,7 +63,7 @@ def sanitize_input(text: str) -> tuple[str, bool]:
     sanitized = unicodedata.normalize("NFKC", text)
 
     # Step 2: Truncate
-    sanitized = sanitized[:MAX_MESSAGE_LENGTH]
+    sanitized = sanitized[:settings.max_message_length]
 
     # Step 3: Strip code blocks
     sanitized = _CODE_BLOCK_RE.sub("[code block removed]", sanitized)

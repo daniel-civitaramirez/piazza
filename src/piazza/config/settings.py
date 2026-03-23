@@ -25,14 +25,46 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str = ""
     ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen3.5:4b"
+    ollama_timeout: float = 10.0
+    claude_model: str = "claude-haiku-4-5-20251001"
+    claude_timeout: float = 15.0
+    claude_max_tokens: int = 1024
+    llm_temperature: float = 0.0
 
     # Security
     encryption_key: str = ""
     webhook_secret: str = ""
     injection_patterns_path: str = "config/injection_patterns.json"
 
+    # Circuit breaker
+    circuit_breaker_failures: int = 3
+    circuit_breaker_window: int = 120
+    circuit_breaker_cooldown: int = 600
+
+    # Input validation
+    max_message_length: int = 500
+    default_currency: str = "EUR"
+
+    # WhatsApp client
+    wa_send_max_retries: int = 3
+    wa_send_backoff_base: float = 0.5
+    wa_client_timeout: float = 10.0
+    health_check_timeout: float = 5.0
+
+    # Agent
+    conversation_context_limit: int = 10
+
+    # Worker
+    worker_max_jobs: int = 10
+    worker_job_timeout: int = 30
+    human_delay_min: float = 1.0
+    human_delay_max: float = 3.0
+    reminder_cron_seconds: str = "0,30"
+
     # Monitoring (optional)
     sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.1
 
     @property
     def encryption_key_bytes(self) -> bytes:
@@ -40,6 +72,11 @@ class Settings(BaseSettings):
         import base64
 
         return base64.b64decode(self.encryption_key)
+
+    @property
+    def reminder_cron_seconds_set(self) -> set[int]:
+        """Parse comma-separated cron seconds string into a set."""
+        return {int(s.strip()) for s in self.reminder_cron_seconds.split(",")}
 
 
 settings = Settings()

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from piazza.config.constants import MAX_MESSAGE_LENGTH
+from piazza.config.settings import settings
 from piazza.workers.security.sanitizer import sanitize_input
 
 
@@ -37,7 +37,7 @@ class TestTruncation:
         """Input longer than MAX_MESSAGE_LENGTH is truncated."""
         text = "a" * 600
         sanitized, _ = sanitize_input(text)
-        assert len(sanitized) == MAX_MESSAGE_LENGTH
+        assert len(sanitized) == settings.max_message_length
 
     def test_short_input_not_truncated(self):
         """Input shorter than MAX_MESSAGE_LENGTH is not truncated."""

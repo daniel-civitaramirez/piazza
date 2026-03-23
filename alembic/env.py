@@ -1,21 +1,20 @@
 import asyncio
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from piazza.config.settings import settings
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override sqlalchemy.url from environment variable if set
-database_url = os.getenv("SUPABASE_DB_URL")
-if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+# Override sqlalchemy.url from settings (reads .env / environment variables)
+if settings.supabase_db_url:
+    config.set_main_option("sqlalchemy.url", settings.supabase_db_url)
 
 target_metadata = None
 

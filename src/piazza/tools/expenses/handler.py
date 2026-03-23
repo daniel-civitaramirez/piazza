@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from piazza.config.constants import DEFAULT_CURRENCY
+from piazza.config.settings import settings
 from piazza.db.repositories.member import (
     find_member_by_name,
     get_active_members,
@@ -112,7 +112,7 @@ async def handle_expense_add(
         return "Please specify an amount. Example: _@Piazza I paid 50 for dinner_"
 
     amount_cents = int(round(entities.amount * 100))
-    currency = entities.currency or DEFAULT_CURRENCY
+    currency = entities.currency or settings.default_currency
 
     # Resolve payer
     payer_id, error = await _resolve_payer(
@@ -153,7 +153,7 @@ async def handle_expense_settle(
     if entities.amount is not None:
         # Recording a payment: "Josh paid Mia 40"
         amount_cents = int(round(entities.amount * 100))
-        currency = entities.currency or DEFAULT_CURRENCY
+        currency = entities.currency or settings.default_currency
 
         if not entities.participants or len(entities.participants) != 1:
             return "Please specify who was paid. Example: _@Piazza Josh paid Mia 40_"

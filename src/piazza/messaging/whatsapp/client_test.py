@@ -38,6 +38,8 @@ class TestSendText:
         mock_settings.evo_api_url = "http://evo:8080"
         mock_settings.evo_api_key = "test-key"
         mock_settings.evo_instance_name = "piazza-main"
+        mock_settings.wa_send_max_retries = 3
+        mock_settings.wa_send_backoff_base = 0.5
         client._http_client = mock_httpx
 
         await client.send_text("120363001@g.us", "Hello group!")
@@ -56,6 +58,8 @@ class TestSendText:
         mock_settings.evo_api_url = "http://evo:8080"
         mock_settings.evo_api_key = "test-key"
         mock_settings.evo_instance_name = "piazza-main"
+        mock_settings.wa_send_max_retries = 3
+        mock_settings.wa_send_backoff_base = 0.5
         mock_httpx.post.side_effect = httpx.ConnectError("connection refused")
         client._http_client = mock_httpx
 
@@ -73,6 +77,8 @@ class TestSendText:
         mock_settings.evo_api_url = "http://evo:8080"
         mock_settings.evo_api_key = "test-key"
         mock_settings.evo_instance_name = "piazza-main"
+        mock_settings.wa_send_max_retries = 3
+        mock_settings.wa_send_backoff_base = 0.5
 
         response = AsyncMock()
         response.raise_for_status = lambda: None

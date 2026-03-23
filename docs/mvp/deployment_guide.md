@@ -235,6 +235,9 @@ nano .env   # or vim, whatever you prefer
 Fill in every variable. Here's what you need and where each comes from:
 
 ```bash
+# === Admin (optional — leave empty to auto-approve all groups) ===
+ADMIN_JID=
+
 # === Evolution API ===
 EVO_API_KEY=<generate a random string: openssl rand -hex 32>
 EVO_INSTANCE_NAME=piazza-main
@@ -255,6 +258,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 # === Security ===
 ENCRYPTION_KEY=<generate: python3 -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())">
 WEBHOOK_SECRET=<generate: openssl rand -hex 32>
+
+# === Monitoring (optional) ===
+SENTRY_DSN=
 
 # === Optional ===
 OPENEXCHANGERATES_KEY=<sign up at openexchangerates.org — free tier is 1000 req/mo>
@@ -335,13 +341,14 @@ docker compose -f docker-compose.prod.yml logs -f
 This downloads ~2.7 GB. Takes 1-5 minutes depending on your server's bandwidth.
 
 ```bash
+# Pull the default model (qwen3.5:4b). If you set OLLAMA_MODEL in .env, pull that model instead.
 docker compose -f docker-compose.prod.yml exec ollama ollama pull qwen3.5:4b
 ```
 
 Verify:
 ```bash
 docker compose -f docker-compose.prod.yml exec ollama ollama list
-# Should show qwen3.5:4b
+# Should show qwen3.5:4b (or your custom OLLAMA_MODEL)
 ```
 
 ### 6.9 Run database migrations

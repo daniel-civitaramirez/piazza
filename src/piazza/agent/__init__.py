@@ -16,8 +16,10 @@ def get_opensource_agent() -> OpenSourceAgent:
     if _opensource is None:
         _opensource = OpenSourceAgent(
             url=settings.ollama_url,
-            model="qwen3.5:4b",
-            timeout=10.0,
+            model=settings.ollama_model,
+            timeout=settings.ollama_timeout,
+            temperature=settings.llm_temperature,
+            context_limit=settings.conversation_context_limit,
         )
     return _opensource
 
@@ -28,7 +30,10 @@ def get_claude_agent() -> ClaudeAgent:
     if _claude is None:
         _claude = ClaudeAgent(
             api_key=settings.anthropic_api_key,
-            model="claude-haiku-4-5-20251001",
+            model=settings.claude_model,
+            timeout=settings.claude_timeout,
+            max_tokens=settings.claude_max_tokens,
+            context_limit=settings.conversation_context_limit,
         )
     return _claude
 

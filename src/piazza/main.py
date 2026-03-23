@@ -12,7 +12,7 @@ from piazza.config.settings import settings
 if settings.sentry_dsn:
     import sentry_sdk
 
-    sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0.1)
+    sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=settings.sentry_traces_sample_rate)
 
 logger = structlog.get_logger()
 
@@ -85,7 +85,7 @@ async def health():
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=settings.health_check_timeout) as client:
                 resp = await client.get(
                     f"{settings.evo_api_url.rstrip('/')}/instance/fetchInstances",
                     headers={"apikey": settings.evo_api_key},
