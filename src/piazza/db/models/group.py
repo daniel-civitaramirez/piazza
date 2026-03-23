@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Text, func
+from sqlalchemy import JSON, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from piazza.db.base import Base, TimestampMixin
@@ -20,15 +19,10 @@ class Group(TimestampMixin, Base):
     wa_jid: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name_encrypted: Mapped[bytes | None] = mapped_column(default=None)
     timezone: Mapped[str] = mapped_column(Text, default="UTC")
-    language: Mapped[str] = mapped_column(Text, default="en")
     settings: Mapped[dict | None] = mapped_column(JSON, default=dict)
     approval_status: Mapped[str] = mapped_column(
         Text, default="pending", server_default="pending"
     )
-    last_active_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
     # Relationships
     members: Mapped[list["Member"]] = relationship(  # noqa: F821
         back_populates="group", cascade="all, delete-orphan"

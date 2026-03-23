@@ -32,7 +32,6 @@ class ItineraryItem(Base):
         DateTime(timezone=True), default=None
     )
     location: Mapped[str | None] = mapped_column(Text, default=None)
-    location_url: Mapped[str | None] = mapped_column(Text, default=None)
     notes: Mapped[str | None] = mapped_column(Text, default=None)
     metadata_: Mapped[dict | None] = mapped_column(
         "metadata", JSON, default=dict

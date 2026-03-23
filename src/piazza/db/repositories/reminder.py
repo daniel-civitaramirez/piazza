@@ -17,7 +17,6 @@ async def create_reminder(
     created_by: uuid.UUID,
     message: str,
     trigger_at: datetime,
-    recurrence: str | None = None,
 ) -> Reminder:
     """Create a new reminder."""
     reminder = Reminder(
@@ -25,7 +24,6 @@ async def create_reminder(
         created_by=created_by,
         message=message,
         trigger_at=trigger_at,
-        recurrence=recurrence,
         status="active",
     )
     session.add(reminder)

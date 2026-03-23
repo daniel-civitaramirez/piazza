@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class Entities(BaseModel):
@@ -16,6 +16,3 @@ class Entities(BaseModel):
     items: list[dict] | None = None
     reminder_number: int | None = None
     new_description: str | None = None
-
-    # Pipeline-injected context (not from LLM output)
-    reply_to_message_id: str | None = Field(None, exclude=True)
