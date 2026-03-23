@@ -150,29 +150,6 @@ class TestSimplifyDebts:
 
 class TestExpenseServiceDB:
     @pytest.mark.asyncio
-    async def test_soft_delete_last(self, db_session, sample_group):
-        """Soft delete marks is_deleted=True."""
-        result = await service.add_expense(
-            db_session,
-            sample_group.group_id,
-            sample_group.alice.id,
-            5000,
-            "EUR",
-            "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
-        )
-        assert "dinner" in result
-
-        delete_result = await service.delete_last_expense(db_session, sample_group.group_id)
-        assert "Deleted" in delete_result
-        assert "dinner" in delete_result
-
-    @pytest.mark.asyncio
-    async def test_delete_when_no_expenses(self, db_session, sample_group):
-        result = await service.delete_last_expense(db_session, sample_group.group_id)
-        assert "No expenses" in result
-
-    @pytest.mark.asyncio
     async def test_list_no_expenses(self, db_session, sample_group):
         result = await service.list_expenses(db_session, sample_group.group_id)
         assert "No expenses" in result

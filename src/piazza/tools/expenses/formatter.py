@@ -105,11 +105,11 @@ def format_settlement_confirmation(
 
 def format_expense_disambiguation(expenses: list[Expense]) -> str:
     """Format disambiguation for multiple matching expenses."""
-    lines = ["Multiple expenses match. Be more specific:\n"]
-    for i, exp in enumerate(expenses[:5], 1):
+    lines = ["Multiple expenses match. Use list_expenses to find the item number:\n"]
+    for exp in expenses[:5]:
         desc = exp.description or "expense"
         amount = _fmt_amount(exp.amount_cents, exp.currency)
-        lines.append(f"{i}. {desc} ({amount})")
+        lines.append(f"• {desc} ({amount})")
     return "\n".join(lines)
 
 

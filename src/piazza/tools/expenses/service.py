@@ -257,11 +257,21 @@ async def record_settlement(
     )
 
 
-async def delete_last_expense(session: AsyncSession, group_id: uuid.UUID) -> str:
-    """Soft-delete the last expense."""
-    expense = await expense_repo.delete_last_expense(session, group_id)
-    if expense is None:
-        return "No expenses to delete."
+
+async def delete_expense_by_number(
+    session: AsyncSession, group_id: uuid.UUID, number: int
+) -> str:
+    """Soft-delete the Nth recent expense (1-indexed, same order as list_expenses)."""
+    expenses = await expense_repo.get_expenses(session, group_id)
+    if number < 1 or number > len(expenses):
+        total = len(expenses)
+        if total == 0:
+            return "No expenses to delete."
+        return f"Expense #{number} not found. You have {total} recent expense(s)."
+
+    expense = expenses[number - 1]
+    expense.is_deleted = True
+    await session.flush()
     await session.commit()
     desc = expense.description or "expense"
     amount = f"{expense.amount_cents / 100:.2f}"

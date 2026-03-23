@@ -44,6 +44,24 @@ async def list_notes(
     return formatter.format_note_list(notes)
 
 
+async def delete_note_by_number(
+    session: AsyncSession, group_id: uuid.UUID, number: int
+) -> str:
+    """Delete the Nth note (1-indexed, same order as list_notes)."""
+    notes = await note_repo.get_notes(session, group_id)
+    if number < 1 or number > len(notes):
+        total = len(notes)
+        if total == 0:
+            return "No notes to delete."
+        return f"Note #{number} not found. You have {total} saved note(s)."
+
+    note = notes[number - 1]
+    await session.delete(note)
+    await session.flush()
+    await session.commit()
+    return formatter.format_delete_confirmation(note)
+
+
 async def delete_note(
     session: AsyncSession, group_id: uuid.UUID, query: str
 ) -> str:

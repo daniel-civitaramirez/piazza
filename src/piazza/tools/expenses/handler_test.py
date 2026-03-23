@@ -257,15 +257,6 @@ class TestHandleExpenseUpdate:
         assert "Multiple" in result
 
     @pytest.mark.asyncio
-    async def test_update_missing_description_returns_error(self, db_session, sample_group):
-        """No description returns error."""
-        entities = Entities(amount=50.0)
-        result = await handler.handle_expense_update(
-            db_session, sample_group.group_id, sample_group.alice.id, entities
-        )
-        assert "describe which expense" in result.lower()
-
-    @pytest.mark.asyncio
     async def test_update_nothing_to_change(self, db_session, sample_group):
         """Description only with no changes returns error."""
         await service.add_expense(
@@ -279,3 +270,72 @@ class TestHandleExpenseUpdate:
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert "Nothing to update" in result
+
+    @pytest.mark.asyncio
+    async def test_update_by_number(self, db_session, sample_group):
+        """Update expense identified by item_number."""
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "dinner",
+            [sample_group.alice.id, sample_group.bob.id],
+        )
+
+        entities = Entities(item_number=1, amount=50.0)
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "Updated" in result
+
+    @pytest.mark.asyncio
+    async def test_update_by_number_out_of_range(self, db_session, sample_group):
+        """Out-of-range item_number returns error."""
+        entities = Entities(item_number=99, amount=50.0)
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "not found" in result.lower() or "No expenses" in result
+
+    @pytest.mark.asyncio
+    async def test_update_no_identifier(self, db_session, sample_group):
+        """Neither item_number nor description returns error."""
+        entities = Entities(amount=50.0)
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "specify" in result.lower()
+
+
+class TestHandleExpenseDeleteByNumber:
+    @pytest.mark.asyncio
+    async def test_delete_by_number(self, db_session, sample_group):
+        """Delete expense identified by item_number."""
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "dinner",
+            [sample_group.alice.id, sample_group.bob.id],
+        )
+
+        entities = Entities(item_number=1)
+        result = await handler.handle_expense_delete(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "Deleted" in result
+        assert "dinner" in result
+
+    @pytest.mark.asyncio
+    async def test_delete_by_number_out_of_range(self, db_session, sample_group):
+        """Out-of-range item_number returns error."""
+        entities = Entities(item_number=99)
+        result = await handler.handle_expense_delete(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "not found" in result.lower() or "No expenses" in result
+
+    @pytest.mark.asyncio
+    async def test_delete_no_identifier(self, db_session, sample_group):
+        """Neither item_number nor description returns error."""
+        entities = Entities()
+        result = await handler.handle_expense_delete(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "specify" in result.lower()

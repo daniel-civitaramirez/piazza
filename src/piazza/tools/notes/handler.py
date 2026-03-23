@@ -14,15 +14,8 @@ async def handle_note_save(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
     """Save a note to the group's knowledge base."""
-    content = entities.description or ""
-    if not content:
-        return (
-            "Please specify what to save. "
-            "Example: _@Piazza save: wifi password is BeachLife2026_"
-        )
-
     return await service.save_note(
-        session, group_id, sender_id, content=content, tag=entities.tag
+        session, group_id, sender_id, content=entities.description or "", tag=entities.tag
     )
 
 
@@ -30,11 +23,7 @@ async def handle_note_find(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
     """Search the group's knowledge base."""
-    query = entities.description or ""
-    if not query:
-        return "What are you looking for? Example: _@Piazza find wifi password_"
-
-    return await service.find_notes(session, group_id, query)
+    return await service.find_notes(session, group_id, entities.description or "")
 
 
 async def handle_note_list(
@@ -47,9 +36,12 @@ async def handle_note_list(
 async def handle_note_delete(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
-    """Delete a note from the knowledge base."""
-    query = entities.description or ""
-    if not query:
-        return "Please specify which note to delete. Example: _@Piazza delete note wifi password_"
-
-    return await service.delete_note(session, group_id, query)
+    """Delete a note by list number or content/tag match."""
+    if entities.item_number is not None:
+        return await service.delete_note_by_number(session, group_id, entities.item_number)
+    if entities.description:
+        return await service.delete_note(session, group_id, entities.description)
+    return (
+        "Please specify which note to delete. "
+        "Example: _delete note #1_ or _delete the wifi note_"
+    )

@@ -99,14 +99,6 @@ class TestHandleItineraryShow:
 
 class TestHandleItineraryRemove:
     @pytest.mark.asyncio
-    async def test_empty_description_returns_error(self, db_session, sample_group):
-        entities = Entities()
-        result = await handler.handle_itinerary_remove(
-            db_session, sample_group.group_id, sample_group.alice.id, entities
-        )
-        assert "specify what to remove" in result.lower()
-
-    @pytest.mark.asyncio
     async def test_remove_existing_item(self, db_session, sample_group):
         await queries.create_item(
             db_session,
@@ -130,3 +122,36 @@ class TestHandleItineraryRemove:
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert "No itinerary item" in result
+
+    @pytest.mark.asyncio
+    async def test_remove_by_number(self, db_session, sample_group):
+        await queries.create_item(
+            db_session,
+            group_id=sample_group.group_id,
+            item_type="hotel",
+            title="Hotel Check-in",
+        )
+        await db_session.flush()
+
+        entities = Entities(item_number=1)
+        result = await handler.handle_itinerary_remove(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "Removed" in result
+        assert "Hotel Check-in" in result
+
+    @pytest.mark.asyncio
+    async def test_remove_by_number_out_of_range(self, db_session, sample_group):
+        entities = Entities(item_number=99)
+        result = await handler.handle_itinerary_remove(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "not found" in result.lower() or "No itinerary" in result
+
+    @pytest.mark.asyncio
+    async def test_remove_no_identifier(self, db_session, sample_group):
+        entities = Entities()
+        result = await handler.handle_itinerary_remove(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "specify" in result.lower()

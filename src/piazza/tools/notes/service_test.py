@@ -144,8 +144,8 @@ class TestNoteDelete:
 
         result = await service.delete_note(db_session, sample_group.group_id, "wifi")
         assert "Multiple notes match" in result
-        assert "1." in result
-        assert "2." in result
+        assert "wifi home" in result
+        assert "wifi office" in result
 
         # Both notes should still exist
         notes = await queries.get_notes(db_session, sample_group.group_id)

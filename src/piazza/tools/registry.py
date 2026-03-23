@@ -131,13 +131,17 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "delete_expense",
-        "description": "Delete the most recent expense, optionally matching a description.",
+        "description": "Delete an expense by its list number or by matching its description.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "item_number": {
+                    "type": "integer",
+                    "description": "Position number from list_expenses (e.g. 2 for #2)",
+                },
                 "description": {
                     "type": "string",
-                    "description": "Description to match",
+                    "description": "Text to identify the expense to delete",
                 },
             },
         },
@@ -148,6 +152,10 @@ AGENT_TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "item_number": {
+                    "type": "integer",
+                    "description": "Position number from list_expenses (e.g. 2 for #2)",
+                },
                 "description": {
                     "type": "string",
                     "description": "Text to identify the expense to update",
@@ -177,7 +185,6 @@ AGENT_TOOLS: list[dict] = [
                     ),
                 },
             },
-            "required": ["description"],
         },
     },
     {
@@ -217,7 +224,7 @@ AGENT_TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "reminder_number": {
+                "item_number": {
                     "type": "integer",
                     "description": "Position number from list_reminders (e.g. 2 for #2)",
                 },
@@ -234,7 +241,7 @@ AGENT_TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "reminder_number": {
+                "item_number": {
                     "type": "integer",
                     "description": "Position number from list_reminders (e.g. 2 for #2)",
                 },
@@ -293,16 +300,19 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "remove_itinerary",
-        "description": "Remove an item from the itinerary.",
+        "description": "Remove an item from the itinerary by its list number or by matching text.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "item_number": {
+                    "type": "integer",
+                    "description": "Position number from show_itinerary (e.g. 2 for #2)",
+                },
                 "description": {
                     "type": "string",
                     "description": "Identifying text of the item to remove",
                 },
             },
-            "required": ["description"],
         },
     },
     {
@@ -347,16 +357,19 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "delete_note",
-        "description": "Delete a note by its content or tag.",
+        "description": "Delete a note by its list number or by matching its content/tag.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "item_number": {
+                    "type": "integer",
+                    "description": "Position number from list_notes (e.g. 2 for #2)",
+                },
                 "description": {
                     "type": "string",
                     "description": "Identifying text of the note to delete",
                 },
             },
-            "required": ["description"],
         },
     },
     {

@@ -14,5 +14,5 @@ class Entities(BaseModel):
     datetime_raw: str | None = None
     tag: str | None = None
     items: list[dict] | None = None
-    reminder_number: int | None = None
+    item_number: int | None = None
     new_description: str | None = None

@@ -83,6 +83,24 @@ async def list_itinerary(
     return formatter.format_full_itinerary(items)
 
 
+async def delete_item_by_number(
+    session: AsyncSession, group_id: uuid.UUID, number: int
+) -> str:
+    """Delete the Nth itinerary item (1-indexed, same order as show_itinerary)."""
+    items = await itinerary_repo.get_items(session, group_id)
+    if number < 1 or number > len(items):
+        total = len(items)
+        if total == 0:
+            return "No itinerary items to remove."
+        return f"Item #{number} not found. You have {total} itinerary item(s)."
+
+    item = items[number - 1]
+    await session.delete(item)
+    await session.flush()
+    await session.commit()
+    return f"Removed: *{item.title}*"
+
+
 async def delete_item(
     session: AsyncSession, group_id: uuid.UUID, description: str
 ) -> str:

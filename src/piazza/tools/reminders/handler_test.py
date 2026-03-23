@@ -14,7 +14,7 @@ from piazza.tools.schemas import Entities
 class TestHandleReminderCancel:
     @pytest.mark.asyncio
     async def test_cancel_by_number(self, db_session, sample_group):
-        """Cancel reminder using reminder_number."""
+        """Cancel reminder using item_number."""
         trigger = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
         await create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
@@ -22,7 +22,7 @@ class TestHandleReminderCancel:
         )
         await db_session.flush()
 
-        entities = Entities(reminder_number=1)
+        entities = Entities(item_number=1)
         result = await handler.handle_reminder_cancel(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
@@ -91,7 +91,7 @@ class TestHandleReminderCancel:
 class TestHandleReminderSnooze:
     @pytest.mark.asyncio
     async def test_snooze_by_number(self, db_session, sample_group):
-        """Snooze using reminder_number + datetime_raw."""
+        """Snooze using item_number + datetime_raw."""
         trigger1 = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
         trigger2 = datetime(2030, 6, 1, 12, 0, tzinfo=timezone.utc)
         await create_reminder(
@@ -104,7 +104,7 @@ class TestHandleReminderSnooze:
         )
         await db_session.flush()
 
-        entities = Entities(reminder_number=2, datetime_raw="1h")
+        entities = Entities(item_number=2, datetime_raw="1h")
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
@@ -138,7 +138,7 @@ class TestHandleReminderSnooze:
         )
         await db_session.flush()
 
-        entities = Entities(reminder_number=5, datetime_raw="1h")
+        entities = Entities(item_number=5, datetime_raw="1h")
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
@@ -147,7 +147,7 @@ class TestHandleReminderSnooze:
     @pytest.mark.asyncio
     async def test_snooze_missing_duration_returns_error(self, db_session, sample_group):
         """Number but no duration returns error."""
-        entities = Entities(reminder_number=2)
+        entities = Entities(item_number=2)
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
@@ -165,7 +165,7 @@ class TestHandleReminderSnooze:
     @pytest.mark.asyncio
     async def test_snooze_no_active_reminders(self, db_session, sample_group):
         """Snoozing when no active reminders exist."""
-        entities = Entities(reminder_number=1, datetime_raw="1h")
+        entities = Entities(item_number=1, datetime_raw="1h")
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )

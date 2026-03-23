@@ -54,6 +54,15 @@ Tools follow a consistent layered pattern:
 - **registry.py**: Maps tool names to handlers, defines tool schemas in Anthropic format
 - **schemas.py**: `Entities` Pydantic model with optional fields matching tool input schemas
 
+### Item Identification
+
+Mutation tools (delete, update, cancel) identify entries two ways:
+- **`item_number`**: Position from the tool's `list_*`/`show_*` output (1-indexed). Always unambiguous.
+- **`description`**: Substring match (`ILIKE %query%`). Returns disambiguation (bullets, no numbers) if >1 match.
+
+Handlers branch: `item_number` first → `description` fallback → error if neither.
+`*_by_number` service functions reuse the same repo query + ordering as the list formatter.
+
 ### Layer Separation
 
 ```

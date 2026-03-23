@@ -47,8 +47,8 @@ async def handle_reminder_cancel(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
     """Cancel a reminder by number or by matching message text."""
-    if entities.reminder_number is not None:
-        return await service.cancel_by_number(session, group_id, entities.reminder_number)
+    if entities.item_number is not None:
+        return await service.cancel_by_number(session, group_id, entities.item_number)
 
     if entities.description:
         return await service.cancel_by_message(session, group_id, entities.description)
@@ -67,9 +67,9 @@ async def handle_reminder_snooze(
     if not duration:
         return "Please specify a snooze duration. Example: _snooze #2 1h_ or _snooze dentist 30m_"
 
-    if entities.reminder_number is not None:
+    if entities.item_number is not None:
         return await service.snooze_by_number(
-            session, group_id, entities.reminder_number, duration
+            session, group_id, entities.item_number, duration
         )
 
     if entities.description:
@@ -87,7 +87,4 @@ async def handle_set_timezone(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
     """Set the group timezone."""
-    tz = entities.description or ""
-    if not tz:
-        return "Please specify a timezone. Example: _@Piazza set timezone Europe/Paris_"
-    return await service.set_group_timezone(session, group_id, tz)
+    return await service.set_group_timezone(session, group_id, entities.description or "")

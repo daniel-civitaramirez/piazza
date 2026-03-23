@@ -185,37 +185,50 @@ async def handle_expense_settle(
 async def handle_expense_delete(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
-    """Delete an expense by description match, or the last expense if no description."""
+    """Delete an expense by list number or description match."""
+    if entities.item_number is not None:
+        return await service.delete_expense_by_number(session, group_id, entities.item_number)
     if entities.description:
         return await service.delete_expense_by_description(
             session, group_id, entities.description
         )
-    return await service.delete_last_expense(session, group_id)
+    return (
+        "Please specify which expense to delete. "
+        "Example: _delete expense #3_ or _delete the dinner expense_"
+    )
 
 
 async def handle_expense_update(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
     """Update an existing expense."""
-    if not entities.description:
-        return (
-            "Please describe which expense to update. "
-            "Example: _@Piazza update the dinner expense to 60_"
-        )
-
-    # Find the expense first — needed for payer anchor and passed to service
     from piazza.db.repositories import expense as expense_repo
     from piazza.tools.expenses.formatter import format_expense_disambiguation
 
-    matches = await expense_repo.find_expenses_by_description(
-        session, group_id, entities.description
-    )
-    if not matches:
-        return f'No expense matching "{entities.description}" found.'
-    if len(matches) > 1:
-        return format_expense_disambiguation(matches)
-
-    expense = matches[0]
+    # Resolve target expense: by number or by description
+    if entities.item_number is not None:
+        expenses = await expense_repo.get_expenses(session, group_id)
+        number = entities.item_number
+        if number < 1 or number > len(expenses):
+            total = len(expenses)
+            if total == 0:
+                return "No expenses to update."
+            return f"Expense #{number} not found. You have {total} recent expense(s)."
+        expense = expenses[number - 1]
+    elif entities.description:
+        matches = await expense_repo.find_expenses_by_description(
+            session, group_id, entities.description
+        )
+        if not matches:
+            return f'No expense matching "{entities.description}" found.'
+        if len(matches) > 1:
+            return format_expense_disambiguation(matches)
+        expense = matches[0]
+    else:
+        return (
+            "Please specify which expense to update. "
+            "Example: _update expense #3_ or _update the dinner expense to 60_"
+        )
 
     new_amount_cents = (
         int(round(entities.amount * 100)) if entities.amount is not None else None

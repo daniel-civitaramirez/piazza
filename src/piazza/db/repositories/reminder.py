@@ -72,14 +72,14 @@ async def find_active_reminders_by_message(
 
 
 async def cancel_reminder(
-    session: AsyncSession, group_id: uuid.UUID, reminder_number: int
+    session: AsyncSession, group_id: uuid.UUID, number: int
 ) -> Reminder | None:
     """Cancel the Nth active reminder (1-indexed) for a group."""
     reminders = await get_active_reminders(session, group_id)
-    if reminder_number < 1 or reminder_number > len(reminders):
+    if number < 1 or number > len(reminders):
         return None
 
-    reminder = reminders[reminder_number - 1]
+    reminder = reminders[number - 1]
     reminder.status = "cancelled"
     await session.flush()
     return reminder

@@ -112,22 +112,6 @@ async def find_expenses_by_description(
     return list(result.scalars().all())
 
 
-async def delete_last_expense(
-    session: AsyncSession, group_id: uuid.UUID
-) -> Expense | None:
-    """Soft-delete the most recent non-deleted expense. Returns it or None."""
-    result = await session.execute(
-        select(Expense)
-        .where(Expense.group_id == group_id, Expense.is_deleted == False)  # noqa: E712
-        .order_by(Expense.created_at.desc())
-        .limit(1)
-    )
-    expense = result.scalar_one_or_none()
-    if expense is not None:
-        expense.is_deleted = True
-        await session.flush()
-    return expense
-
 
 async def get_expense_shares(
     session: AsyncSession, group_id: uuid.UUID

@@ -8,7 +8,6 @@ from piazza.db.repositories.expense import (
     create_expense,
     create_expense_participants,
     create_settlement,
-    delete_last_expense,
     get_expense_shares,
     get_expenses,
     get_settlements,
@@ -81,22 +80,6 @@ class TestGetExpenses:
         expenses = await get_expenses(db_session, sample_group.group_id)
         assert expenses[0].description == "second"
 
-
-class TestDeleteLastExpense:
-    @pytest.mark.asyncio
-    async def test_soft_deletes(self, db_session, sample_group):
-        await create_expense(
-            db_session, sample_group.group_id, sample_group.alice.id,
-            1000, "EUR", "lunch",
-        )
-        deleted = await delete_last_expense(db_session, sample_group.group_id)
-        assert deleted is not None
-        assert deleted.is_deleted is True
-
-    @pytest.mark.asyncio
-    async def test_empty_returns_none(self, db_session, sample_group):
-        result = await delete_last_expense(db_session, sample_group.group_id)
-        assert result is None
 
 
 class TestGetExpenseShares:

@@ -33,9 +33,12 @@ async def handle_itinerary_show(
 async def handle_itinerary_remove(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> str:
-    """Remove an item from the itinerary."""
-    desc = entities.description or ""
-    if not desc:
-        return "Please specify what to remove. Example: _@Piazza remove the hotel check-in_"
-
-    return await service.delete_item(session, group_id, desc)
+    """Remove an item from the itinerary by list number or description match."""
+    if entities.item_number is not None:
+        return await service.delete_item_by_number(session, group_id, entities.item_number)
+    if entities.description:
+        return await service.delete_item(session, group_id, entities.description)
+    return (
+        "Please specify which item to remove. "
+        "Example: _remove itinerary #2_ or _remove the hotel_"
+    )

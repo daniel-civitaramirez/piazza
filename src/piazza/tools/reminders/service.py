@@ -134,10 +134,10 @@ async def cancel_by_message(
     if not matches:
         return f'No active reminder matching "{query}".'
     if len(matches) > 1:
-        lines = ["Multiple reminders match. Be more specific:\n"]
-        for i, r in enumerate(matches[:5], 1):
+        lines = ["Multiple reminders match. Use list_reminders to find the item number:\n"]
+        for r in matches[:5]:
             time_str = r.trigger_at.strftime("%b %d at %H:%M UTC")
-            lines.append(f"#{i} {r.message} — {time_str}")
+            lines.append(f"• {r.message} — {time_str}")
         return "\n".join(lines)
 
     reminder = matches[0]
@@ -186,10 +186,10 @@ async def snooze_by_message(
     if not matches:
         return f'No active reminder matching "{query}".'
     if len(matches) > 1:
-        lines = ["Multiple reminders match. Be more specific:\n"]
-        for i, r in enumerate(matches[:5], 1):
+        lines = ["Multiple reminders match. Use list_reminders to find the item number:\n"]
+        for r in matches[:5]:
             time_str = r.trigger_at.strftime("%b %d at %H:%M UTC")
-            lines.append(f"#{i} {r.message} — {time_str}")
+            lines.append(f"• {r.message} — {time_str}")
         return "\n".join(lines)
 
     return await snooze(session, matches[0].id, duration_str)
