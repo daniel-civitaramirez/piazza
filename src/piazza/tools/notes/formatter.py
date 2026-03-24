@@ -55,10 +55,10 @@ def format_delete_confirmation(note: Note) -> str:
 
 def format_disambiguation(notes: list[Note]) -> str:
     """Format disambiguation message for ambiguous deletes."""
-    lines = ["Multiple notes match. Use list_notes to find the item number:\n"]
-    for note in notes:
+    lines = ["Multiple notes match. Which one?\n"]
+    for i, note in enumerate(notes[:5], 1):
         if note.tag:
-            lines.append(f"• *{note.tag}* \u2014 {note.content}")
+            lines.append(f"{i}. *{note.tag}* \u2014 {note.content}")
         else:
-            lines.append(f"• {note.content}")
+            lines.append(f"{i}. {note.content}")
     return "\n".join(lines)

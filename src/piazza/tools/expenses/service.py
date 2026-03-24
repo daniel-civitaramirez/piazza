@@ -142,22 +142,19 @@ async def add_expense(
     amount_cents: int,
     currency: str,
     description: str | None,
-    participant_ids: list[uuid.UUID],
+    shares: list[tuple[uuid.UUID, int]],
 ) -> str:
     """Create an expense with participants and return confirmation string."""
-    shares = calculate_even_split(amount_cents, len(participant_ids))
-
     expense = await expense_repo.create_expense(
         session, group_id, payer_id, amount_cents, currency, description
     )
-    share_tuples = list(zip(participant_ids, shares))
-    await expense_repo.create_expense_participants(session, expense.id, share_tuples)
+    await expense_repo.create_expense_participants(session, expense.id, shares)
 
     members = await get_all_members(session, group_id)
     member_map = {m.id: m.display_name for m in members}
 
     # Auto-note for knowledge base
-    participant_names = [member_map.get(mid, "Unknown") for mid, _ in share_tuples]
+    participant_names = [member_map.get(mid, "Unknown") for mid, _ in shares]
     note_content = _build_expense_note(
         description, amount_cents, currency,
         member_map.get(payer_id, "Unknown"), participant_names,
@@ -171,7 +168,7 @@ async def add_expense(
 
     return formatter.format_expense_confirmation(
         amount_cents, currency, description, member_map.get(payer_id, "Unknown"),
-        [(member_map.get(mid, "Unknown"), s) for mid, s in share_tuples],
+        [(member_map.get(mid, "Unknown"), s) for mid, s in shares],
     )
 
 
@@ -307,12 +304,12 @@ async def update_expense(
     new_currency: str | None = None,
     new_description: str | None = None,
     new_payer_id: uuid.UUID | None = None,
-    new_participant_ids: list[uuid.UUID] | None = None,
+    new_shares: list[tuple[uuid.UUID, int]] | None = None,
 ) -> str:
     """Update fields on an already-found expense."""
     has_changes = any(v is not None for v in (
         new_amount_cents, new_currency, new_description,
-        new_payer_id, new_participant_ids,
+        new_payer_id, new_shares,
     ))
     if not has_changes:
         return "Nothing to update. Specify a new amount, currency, or description."
@@ -336,35 +333,20 @@ async def update_expense(
         expense.payer_id = new_payer_id
         changes.append(f"Payer: {old_payer} → {new_payer}")
 
-    # Determine the amount for share calculation
-    amount_for_split = expense.amount_cents
-
     if new_amount_cents is not None:
         old_amount = f"{expense.amount_cents / 100:.2f}"
         expense.amount_cents = new_amount_cents
-        amount_for_split = new_amount_cents
         changes.append(f"Amount: {old_amount} → {new_amount_cents / 100:.2f}")
 
-    if new_participant_ids is not None:
-        # Replace participants entirely
-        new_shares = calculate_even_split(
-            amount_for_split, len(new_participant_ids)
-        )
-        share_tuples = list(zip(new_participant_ids, new_shares))
+    if new_shares is not None:
         await expense_repo.replace_expense_participants(
-            session, expense.id, share_tuples
+            session, expense.id, new_shares
         )
-        names = [member_map.get(mid, "Unknown") for mid in new_participant_ids]
-        changes.append(f"Split: {', '.join(names)}")
-    elif new_amount_cents is not None:
-        # Amount changed but participants didn't — recalculate shares
-        participants = list(expense.participants or [])
-        if participants:
-            new_shares = calculate_even_split(
-                new_amount_cents, len(participants)
-            )
-            for participant, share in zip(participants, new_shares):
-                participant.share_cents = share
+        share_parts = [
+            f"{member_map.get(mid, 'Unknown')}: {cents / 100:.2f}"
+            for mid, cents in new_shares
+        ]
+        changes.append(f"Split: {', '.join(share_parts)}")
 
     await session.flush()
     await session.commit()

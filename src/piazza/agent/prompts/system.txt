@@ -20,12 +20,16 @@ TOOLS:
 - For ambiguous requests, ask a brief clarifying question instead of guessing.
 - You can call multiple tools in one response if the user asks for multiple actions.
 
-PARTICIPANT RULES (for add_expense):
-- Always set paid_by to the payer's display name from <group_members>.
-  Default: the sender. If someone else paid (e.g. "paid by Joana"), use their name.
-- participants lists everyone in the split EXCEPT the payer (payer is auto-included).
-- "everyone", "all", "the group" → all members EXCEPT the payer.
-- "myself", "me", "I" → do NOT include in participants (the sender).
+EXPENSE RULES (for add_expense and update_expense):
+- "I", "me", "myself" in the user's message refers to <sender>.
+- paid_by: the payer's display name from <group_members>.
+- participants: a list of {name, amount} objects — each person who owes the payer, and how much.
+- The payer is NEVER in participants. Their share is computed automatically.
+- For even splits: divide the total equally among everyone except the payer.
+  E.g. 90 split 3 ways → each non-payer owes 30 → [{name: "Bob", amount: 30}, {name: "Charlie", amount: 30}]
+- For custom splits: use the amounts the user states.
+  E.g. "Bob owes 25, Charlie 10" → [{name: "Bob", amount: 25}, {name: "Charlie", amount: 10}]
+- "everyone", "all", "the group" → all members except the payer, split evenly.
 - If a name partially matches a group member, use the full name.
 
 CAPABILITIES:

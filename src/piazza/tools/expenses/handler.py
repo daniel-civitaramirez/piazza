@@ -49,59 +49,86 @@ async def _resolve_participants(
     session: AsyncSession,
     group_id: uuid.UUID,
     payer_id: uuid.UUID,
-    participant_names: list[str] | None,
-) -> tuple[list[uuid.UUID], str | None]:
-    """Resolve participant names to member IDs.
+    amount_cents: int,
+    participants: list[dict | str] | None,
+) -> tuple[list[tuple[uuid.UUID, int]], str | None]:
+    """Resolve participant dicts to (member_id, share_cents) pairs.
 
-    Returns (participant_ids, error_message). If error_message is not None,
-    the expense should not be logged and the error should be returned to the user.
+    Returns (shares, error_message). Shares include the payer whose share is
+    total minus the sum of explicit participant amounts.
 
-    The payer is always included in participant_ids.
+    Each participant entry is expected to be {name: str, amount: float}.
+    String entries trigger "everyone" expansion as a safety fallback.
     """
-    participant_ids: list[uuid.UUID] = [payer_id]  # Payer always included
-
-    if not participant_names:
-        return participant_ids, None
+    if not participants:
+        return [(payer_id, amount_cents)], None
 
     active_members = await get_active_members(session, group_id)
 
-    # Safety fallback: if LLM returns "everyone" despite prompt instructions,
-    # expand to all active members rather than trying to resolve it as a name
-    if any(p.lower() in _EVERYONE_KEYWORDS for p in participant_names):
-        if len(active_members) <= 1:
-            return participant_ids, (
-                "I don't know all the group members yet. "
-                "Ask everyone to send a message in the group first, "
-                "or name participants explicitly."
-            )
-        for m in active_members:
-            if m.id != payer_id:
-                participant_ids.append(m.id)
-        return participant_ids, None
+    # Safety fallback: if any entry is a bare string (e.g. "everyone"),
+    # expand to all active members with an even split
+    if any(isinstance(p, str) for p in participants):
+        string_entries = [p for p in participants if isinstance(p, str)]
+        if any(s.lower() in _EVERYONE_KEYWORDS for s in string_entries):
+            if len(active_members) <= 1:
+                return [(payer_id, amount_cents)], (
+                    "I don't know all the group members yet. "
+                    "Ask everyone to send a message in the group first, "
+                    "or name participants explicitly."
+                )
+            from piazza.tools.expenses.service import calculate_even_split
 
-    # Resolve each name with fuzzy matching
+            non_payer = [m for m in active_members if m.id != payer_id]
+            per_person = calculate_even_split(amount_cents, len(non_payer) + 1)
+            shares: list[tuple[uuid.UUID, int]] = [(payer_id, per_person[0])]
+            for i, m in enumerate(non_payer):
+                shares.append((m.id, per_person[i + 1]))
+            return shares, None
+        # Non-everyone string — can't resolve without amounts
+        return [(payer_id, amount_cents)], (
+            "Please specify how much each person owes. "
+            "Example: _Bob 25, Charlie 10_"
+        )
+
+    # Resolve each {name, amount} dict
+    resolved: list[tuple[uuid.UUID, int]] = []
     failed: list[str] = []
 
-    for name in participant_names:
-        member, _candidates = await find_member_by_name(
-            session, group_id, name
-        )
-        if member and member.id != payer_id:
-            participant_ids.append(member.id)
-        elif member and member.id == payer_id:
-            pass  # Payer already included
-        else:
+    for entry in participants:
+        name = entry.get("name", "")
+        raw_amount = entry.get("amount")
+        if not name or raw_amount is None:
+            continue
+
+        member, _candidates = await find_member_by_name(session, group_id, name)
+        if member is None:
             failed.append(name)
+            continue
+
+        entry_cents = int(round(float(raw_amount) * 100))
+        if entry_cents <= 0:
+            return [(payer_id, amount_cents)], (
+                f"Amount for *{name}* must be positive."
+            )
+        resolved.append((member.id, entry_cents))
 
     if failed:
         names_str = ", ".join(f"*{n}*" for n in failed)
         members_str = ", ".join(f"*{m.display_name}*" for m in active_members)
-        return participant_ids, (
+        return [(payer_id, amount_cents)], (
             f"Could not find {names_str} in this group.\n"
             f"Group members: {members_str}"
         )
 
-    return participant_ids, None
+    # Compute payer share
+    participant_total = sum(cents for _, cents in resolved)
+    payer_share = amount_cents - participant_total
+    if payer_share < 0:
+        return [(payer_id, amount_cents)], (
+            "Participant amounts add up to more than the total expense."
+        )
+
+    return [(payer_id, payer_share)] + resolved, None
 
 
 async def handle_expense_add(
@@ -122,8 +149,8 @@ async def handle_expense_add(
         return error
 
     # Resolve participants
-    participant_ids, error = await _resolve_participants(
-        session, group_id, payer_id, entities.participants
+    shares, error = await _resolve_participants(
+        session, group_id, payer_id, amount_cents, entities.participants
     )
     if error:
         return error
@@ -135,7 +162,7 @@ async def handle_expense_add(
         amount_cents=amount_cents,
         currency=currency,
         description=entities.description,
-        participant_ids=participant_ids,
+        shares=shares,
     )
 
 
@@ -244,12 +271,12 @@ async def handle_expense_update(
             return error
 
     # Resolve new participants if provided
-    new_participant_ids = None
+    new_shares = None
     if entities.participants is not None:
-        # Anchor on new payer, or existing expense payer
         anchor_id = new_payer_id or expense.payer_id
-        new_participant_ids, error = await _resolve_participants(
-            session, group_id, anchor_id, entities.participants
+        split_amount = new_amount_cents if new_amount_cents is not None else expense.amount_cents
+        new_shares, error = await _resolve_participants(
+            session, group_id, anchor_id, split_amount, entities.participants
         )
         if error:
             return error
@@ -261,7 +288,7 @@ async def handle_expense_update(
         new_currency=entities.currency,
         new_description=entities.new_description,
         new_payer_id=new_payer_id,
-        new_participant_ids=new_participant_ids,
+        new_shares=new_shares,
     )
 
 

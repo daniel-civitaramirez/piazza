@@ -81,9 +81,9 @@ def format_full_itinerary(items: list[ItineraryItem]) -> str:
 
 def format_disambiguation(matches: list[ItineraryItem]) -> str:
     """Format disambiguation message for ambiguous removals."""
-    lines = ["Multiple items match. Use show_itinerary to find the item number:\n"]
-    for item in matches:
-        line = f"• {_emoji(item.item_type)} {item.title}"
+    lines = ["Multiple items match. Which one?\n"]
+    for i, item in enumerate(matches[:5], 1):
+        line = f"{i}. {_emoji(item.item_type)} {item.title}"
         if item.start_at:
             line += f" ({item.start_at.strftime('%b %d, %H:%M')})"
         lines.append(line)

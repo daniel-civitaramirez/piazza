@@ -17,6 +17,12 @@ from piazza.tools.expenses.service import (
     simplify_debts,
 )
 
+
+def _shares_for_even(ids, amount_cents):
+    """Helper: build even shares for seeding expenses via service."""
+    splits = calculate_even_split(amount_cents, len(ids))
+    return list(zip(ids, splits))
+
 # ---------- Even split math ----------
 
 
@@ -163,7 +169,10 @@ class TestExpenseServiceDB:
             3000,
             "EUR",
             "taxi",
-            [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
         )
         result = await service.list_expenses(db_session, sample_group.group_id)
         assert "taxi" in result
@@ -178,7 +187,10 @@ class TestExpenseServiceDB:
             5000,
             "EUR",
             "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                5000,
+            ),
         )
         notes = await note_repo.find_notes(db_session, sample_group.group_id, "dinner")
         assert len(notes) == 1
@@ -196,7 +208,10 @@ class TestExpenseServiceDB:
             3000,
             "EUR",
             "lunch",
-            [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
         )
         result = await service.get_balance_summary(db_session, sample_group.group_id)
         assert "Alice" in result
@@ -211,7 +226,10 @@ class TestExpenseServiceDB:
             3000,
             "EUR",
             "dinner",
-            [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
         )
         result = await service.get_settle_suggestions(db_session, sample_group.group_id)
         assert "pays" in result or "settled" in result.lower()
@@ -229,7 +247,10 @@ class TestRecordSettlement:
             3000,
             "EUR",
             "dinner",
-            [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
         )
 
         result = await service.record_settlement(
@@ -261,7 +282,10 @@ class TestRecordSettlement:
             2000,
             "EUR",
             "taxi",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                2000,
+            ),
         )
 
         # Bob pays Alice 500 — should still owe 500
@@ -286,7 +310,10 @@ class TestRecordSettlement:
             10000,
             "EUR",
             "hotel",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                10000,
+            ),
         )
         # Bob owes Alice 5000 cents. Pay 4000.
         result = await service.record_settlement(
@@ -311,7 +338,10 @@ class TestRecordSettlement:
             2000,
             "EUR",
             "lunch",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                2000,
+            ),
         )
         # Bob owes Alice 1000 cents. Pay exactly 1000.
         result = await service.record_settlement(
@@ -334,7 +364,10 @@ class TestRecordSettlement:
             2000,
             "EUR",
             "lunch",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                2000,
+            ),
         )
         await service.record_settlement(
             db_session,

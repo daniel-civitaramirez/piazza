@@ -54,6 +54,16 @@ Tools follow a consistent layered pattern:
 - **registry.py**: Maps tool names to handlers, defines tool schemas in Anthropic format
 - **schemas.py**: `Entities` Pydantic model with optional fields matching tool input schemas
 
+### Expense Splits
+
+Expenses use a unified `participants: [{name, amount}]` format for both even and custom splits. The LLM always computes per-person amounts.
+
+- **`add_expense` / `update_expense`**: `participants` is `[{name: str, amount: number}]` — each person who owes the payer and how much. Payer is never in participants.
+- **`settle_expense`**: `participants` stays `list[str]` (single payee name). Unaffected.
+- **Payer share**: computed by handler as `total - sum(participant_amounts)`. Must be >= 0.
+- **"everyone"**: handler expands to all active members except payer, splits evenly.
+- **Amount-only updates**: don't touch shares. The LLM asks a clarifying question for ambiguous redistributions.
+
 ### Item Identification
 
 Mutation tools (delete, update, cancel) identify entries two ways:

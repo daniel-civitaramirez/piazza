@@ -105,11 +105,13 @@ def format_settlement_confirmation(
 
 def format_expense_disambiguation(expenses: list[Expense]) -> str:
     """Format disambiguation for multiple matching expenses."""
-    lines = ["Multiple expenses match. Use list_expenses to find the item number:\n"]
-    for exp in expenses[:5]:
+    lines = ["Multiple expenses match. Which one?\n"]
+    for i, exp in enumerate(expenses[:5], 1):
         desc = exp.description or "expense"
         amount = _fmt_amount(exp.amount_cents, exp.currency)
-        lines.append(f"• {desc} ({amount})")
+        payer = exp.payer.display_name if exp.payer else "Unknown"
+        split_str = _format_split_summary(exp)
+        lines.append(f"{i}. {desc} ({amount}, paid by {payer}{split_str})")
     return "\n".join(lines)
 
 
@@ -126,6 +128,25 @@ def format_update_confirmation(
     return "\n".join(lines)
 
 
+def _format_split_summary(exp: Expense) -> str:
+    """Build a split summary string showing per-person amounts."""
+    all_shares = [
+        (p.member.display_name, p.share_cents)
+        for p in (exp.participants or [])
+        if p.member
+    ]
+    if not all_shares:
+        return ""
+    amounts = [s for _, s in all_shares]
+    if len(set(amounts)) == 1:
+        # Even split — compact format
+        names = ", ".join(n for n, _ in all_shares)
+        return f", split evenly: {names} — {_fmt_amount(amounts[0], exp.currency)} each"
+    # Custom split — show everyone including payer
+    parts = ", ".join(f"{n} {_fmt_amount(s, exp.currency)}" for n, s in all_shares)
+    return f" — {parts}"
+
+
 def format_expense_list(expenses: list[Expense]) -> str:
     """Format a list of recent expenses."""
     lines = ["*Recent Expenses*\n"]
@@ -133,12 +154,7 @@ def format_expense_list(expenses: list[Expense]) -> str:
         desc = exp.description or "expense"
         amount = _fmt_amount(exp.amount_cents, exp.currency)
         payer = exp.payer.display_name if exp.payer else "Unknown"
-        others = [
-            p.member.display_name
-            for p in (exp.participants or [])
-            if p.member and p.member_id != exp.payer_id
-        ]
-        split_str = f", split with {', '.join(others)}" if others else ""
+        split_str = _format_split_summary(exp)
         lines.append(f"{i}. {amount} — {desc} (paid by {payer}{split_str})")
 
     return "\n".join(lines)

@@ -10,7 +10,7 @@ class Entities(BaseModel):
     currency: str | None = None
     description: str | None = None
     paid_by: str | None = None
-    participants: list[str] | None = None
+    participants: list[str | dict] | None = None
     datetime_raw: str | None = None
     tag: str | None = None
     items: list[dict] | None = None

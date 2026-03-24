@@ -8,13 +8,21 @@ from piazza.tools.expenses import handler, service
 from piazza.tools.schemas import Entities
 
 
+def _shares_for_even(ids, amount_cents):
+    """Helper: build even shares for seeding expenses via service."""
+    from piazza.tools.expenses.service import calculate_even_split
+
+    splits = calculate_even_split(amount_cents, len(ids))
+    return list(zip(ids, splits))
+
+
 class TestHandleExpenseAdd:
     @pytest.mark.asyncio
     async def test_sender_as_payer(self, db_session, sample_group):
         """Default case: sender pays, paid_by set to sender's name."""
         entities = Entities(
             amount=30.0, paid_by="Alice", description="coffee",
-            participants=["Bob"],
+            participants=[{"name": "Bob", "amount": 15.0}],
         )
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
@@ -27,8 +35,8 @@ class TestHandleExpenseAdd:
     async def test_third_party_payer(self, db_session, sample_group):
         """Someone other than the sender paid."""
         entities = Entities(
-            amount=50.0, paid_by="Bob", description="dinner",
-            participants=["Alice", "Charlie"],
+            amount=60.0, paid_by="Bob", description="dinner",
+            participants=[{"name": "Alice", "amount": 20.0}, {"name": "Charlie", "amount": 20.0}],
         )
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
@@ -41,7 +49,7 @@ class TestHandleExpenseAdd:
         """Sender is excluded from split when not in participants."""
         entities = Entities(
             amount=100.0, paid_by="Bob", description="supplies",
-            participants=["Charlie"],
+            participants=[{"name": "Charlie", "amount": 50.0}],
         )
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
@@ -69,7 +77,7 @@ class TestHandleExpenseAdd:
         """Unknown payer name returns error with member list."""
         entities = Entities(
             amount=50.0, paid_by="Zara", description="dinner",
-            participants=["Bob"],
+            participants=[{"name": "Bob", "amount": 25.0}],
         )
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
@@ -81,13 +89,61 @@ class TestHandleExpenseAdd:
     async def test_paid_by_fallback_to_sender(self, db_session, sample_group):
         """When paid_by is not set, falls back to sender."""
         entities = Entities(
-            amount=30.0, description="coffee", participants=["Bob"],
+            amount=30.0, description="coffee",
+            participants=[{"name": "Bob", "amount": 15.0}],
         )
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert "Logged" in result
         assert "Alice" in result
+
+    @pytest.mark.asyncio
+    async def test_custom_split(self, db_session, sample_group):
+        """Custom amounts per participant."""
+        entities = Entities(
+            amount=90.0, paid_by="Alice", description="dinner",
+            participants=[
+                {"name": "Bob", "amount": 25.0},
+                {"name": "Charlie", "amount": 10.0},
+            ],
+        )
+        result = await handler.handle_expense_add(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "Logged" in result
+        # Payer share = 90 - 35 = 55
+        assert "55.00" in result
+        assert "25.00" in result
+        assert "10.00" in result
+
+    @pytest.mark.asyncio
+    async def test_participant_amounts_exceed_total(self, db_session, sample_group):
+        """Participant amounts exceeding total returns error."""
+        entities = Entities(
+            amount=50.0, paid_by="Alice", description="dinner",
+            participants=[
+                {"name": "Bob", "amount": 30.0},
+                {"name": "Charlie", "amount": 30.0},
+            ],
+        )
+        result = await handler.handle_expense_add(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "more than the total" in result
+
+    @pytest.mark.asyncio
+    async def test_solo_expense(self, db_session, sample_group):
+        """Empty participants — payer bears full cost."""
+        entities = Entities(
+            amount=20.0, paid_by="Alice", description="coffee",
+            participants=[],
+        )
+        result = await handler.handle_expense_add(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert "Logged" in result
+        assert "20.00" in result
 
 
 class TestHandleExpenseSettle:
@@ -97,7 +153,10 @@ class TestHandleExpenseSettle:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
         )
 
         entities = Entities(amount=10.0, participants=["Alice"])
@@ -114,7 +173,10 @@ class TestHandleExpenseSettle:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
         )
 
         entities = Entities()
@@ -148,7 +210,10 @@ class TestHandleExpenseSettle:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             5000, "USD", "hotel",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                5000,
+            ),
         )
 
         entities = Entities(amount=25.0, currency="USD", participants=["Alice"])
@@ -162,11 +227,14 @@ class TestHandleExpenseSettle:
 class TestHandleExpenseUpdate:
     @pytest.mark.asyncio
     async def test_update_amount(self, db_session, sample_group):
-        """Update expense amount recalculates shares."""
+        """Update expense amount without participants — shares unchanged."""
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
         entities = Entities(description="dinner", amount=40.0)
@@ -183,7 +251,10 @@ class TestHandleExpenseUpdate:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
         entities = Entities(description="dinner", new_description="fancy dinner")
@@ -199,7 +270,10 @@ class TestHandleExpenseUpdate:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
         entities = Entities(description="dinner", paid_by="Bob")
@@ -211,16 +285,21 @@ class TestHandleExpenseUpdate:
         assert "Bob" in result
 
     @pytest.mark.asyncio
-    async def test_update_participants(self, db_session, sample_group):
-        """Change who's in the split."""
+    async def test_update_participants_custom_split(self, db_session, sample_group):
+        """Change split with custom amounts."""
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
-        # Change split to include Charlie instead of Bob
-        entities = Entities(description="dinner", participants=["Charlie"])
+        entities = Entities(
+            description="dinner",
+            participants=[{"name": "Bob", "amount": 20.0}, {"name": "Charlie", "amount": 10.0}],
+        )
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
@@ -242,12 +321,18 @@ class TestHandleExpenseUpdate:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             2000, "EUR", "dinner at La Piazza",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                2000,
+            ),
         )
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner at El Bulli",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
         entities = Entities(description="dinner", amount=50.0)
@@ -262,7 +347,10 @@ class TestHandleExpenseUpdate:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
         entities = Entities(description="dinner")
@@ -277,7 +365,10 @@ class TestHandleExpenseUpdate:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
         entities = Entities(item_number=1, amount=50.0)
@@ -312,7 +403,10 @@ class TestHandleExpenseDeleteByNumber:
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
             3000, "EUR", "dinner",
-            [sample_group.alice.id, sample_group.bob.id],
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
         )
 
         entities = Entities(item_number=1)

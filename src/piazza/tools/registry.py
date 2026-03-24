@@ -92,10 +92,17 @@ AGENT_TOOLS: list[dict] = [
                 },
                 "participants": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Display name"},
+                            "amount": {"type": "number", "description": "Amount owed"},
+                        },
+                        "required": ["name", "amount"],
+                    },
                     "description": (
-                        "Display names of everyone in the split"
-                        " EXCEPT the payer (payer is auto-included)"
+                        "Each person who owes the payer and how much."
+                        " Payer is never included."
                     ),
                 },
             },
@@ -178,10 +185,17 @@ AGENT_TOOLS: list[dict] = [
                 },
                 "participants": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Display name"},
+                            "amount": {"type": "number", "description": "Amount owed"},
+                        },
+                        "required": ["name", "amount"],
+                    },
                     "description": (
-                        "New participant list — everyone in the split"
-                        " EXCEPT the payer (if changing split)"
+                        "New split — each person who owes the payer and how much."
+                        " Payer is never included."
                     ),
                 },
             },
