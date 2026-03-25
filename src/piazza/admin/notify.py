@@ -56,10 +56,6 @@ async def notify_admin_new_group(
 
     try:
         await client.send_text(settings.admin_jid, message)
-        logger.info("admin_notified_new_group", group_jid=group_jid)
+        logger.info("admin_notified_new_group")
     except Exception:
-        logger.exception(
-            "admin_notify_failed",
-            group_jid=group_jid,
-            admin_jid=settings.admin_jid,
-        )
+        logger.exception("admin_notify_failed")

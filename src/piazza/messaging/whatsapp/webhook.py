@@ -41,15 +41,13 @@ async def _fallback_process(raw_message: dict) -> None:
         async with AsyncSessionFactory() as session:
             response = await process_message(message, session, redis=None)
     except Exception:
-        logger.exception("fallback_process_error", group_jid=message.group_jid)
+        logger.exception("fallback_process_error")
         response = GENERIC_ERROR_RESPONSE
 
     try:
         await client.send_text(message.group_jid, response)
     except Exception:
-        logger.exception(
-            "fallback_send_failed", group_jid=message.group_jid
-        )
+        logger.exception("fallback_send_failed")
 
 
 @router.post("/webhook")
@@ -96,11 +94,7 @@ async def webhook(
             return Response(status_code=200)
 
         await arq_pool.enqueue_job("process_message_job", message.model_dump())
-        logger.info(
-            "webhook_enqueued",
-            group_jid=message.group_jid,
-            sender_jid=message.sender_jid,
-        )
+        logger.info("webhook_enqueued")
 
     elif event == "groups.upsert":
         background_tasks.add_task(handle_group_upsert, raw)
