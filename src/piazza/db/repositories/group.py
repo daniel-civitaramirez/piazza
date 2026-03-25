@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.config.settings import settings
 from piazza.db.models.group import Group
+
+
+async def get_group(session: AsyncSession, group_id: uuid.UUID) -> Group | None:
+    """Get a group by primary key."""
+    result = await session.execute(select(Group).where(Group.id == group_id))
+    return result.scalar_one_or_none()
 
 
 async def get_or_create_group(

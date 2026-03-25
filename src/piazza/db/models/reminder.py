@@ -42,4 +42,3 @@ class Reminder(Base):
 
     # Relationships
     group: Mapped["Group"] = relationship(back_populates="reminders")  # noqa: F821
-    creator: Mapped["Member"] = relationship()  # noqa: F821
