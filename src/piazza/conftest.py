@@ -113,7 +113,7 @@ async def sample_group(db_session: AsyncSession) -> SampleGroup:
             group_id=group.id,
             wa_id_hash=hash_phone(phone),
             wa_id_encrypted=encrypt(phone, TEST_ENCRYPTION_KEY),
-            display_name=name,
+            display_name=encrypt(name, TEST_ENCRYPTION_KEY),
         )
         db_session.add(m)
         members.append(m)

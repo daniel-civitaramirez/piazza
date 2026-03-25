@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from piazza.db.base import Base
@@ -31,7 +31,7 @@ class Reminder(Base):
     created_by: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("members.id"), nullable=False
     )
-    message: Mapped[str] = mapped_column(Text, nullable=False)
+    message: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     trigger_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

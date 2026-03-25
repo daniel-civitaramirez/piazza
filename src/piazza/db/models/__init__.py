@@ -2,7 +2,6 @@
 
 from piazza.db.models.expense import Expense, ExpenseParticipant, Settlement
 from piazza.db.models.group import Group
-from piazza.db.models.injection_log import InjectionLog
 from piazza.db.models.itinerary import ItineraryItem
 from piazza.db.models.member import Member
 from piazza.db.models.message_log import MessageLog
@@ -13,7 +12,6 @@ __all__ = [
     "Expense",
     "ExpenseParticipant",
     "Group",
-    "InjectionLog",
     "ItineraryItem",
     "Member",
     "MessageLog",

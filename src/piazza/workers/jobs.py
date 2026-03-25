@@ -117,6 +117,12 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
                 content=response,
                 wa_message_id=wa_message_id,
             )
+            # Prune old messages beyond retention window (min 2x context to avoid
+            # races with concurrent hydration)
+            multiplier = max(settings.message_log_retention_multiplier, 2)
+            keep = settings.conversation_context_limit * multiplier
+            await message_log_repo.delete_old_entries(session, group.id, keep)
+
             await session.commit()
     except Exception:
         logger.exception("message_log_error")

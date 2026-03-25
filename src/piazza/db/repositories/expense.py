@@ -8,7 +8,22 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from piazza.config.settings import settings
+from piazza.core.encryption import decrypt, decrypt_nullable, encrypt_nullable, set_decrypted
 from piazza.db.models.expense import Expense, ExpenseParticipant, Settlement
+
+
+def _key() -> bytes:
+    return settings.encryption_key_bytes
+
+
+def _decrypt_expense(exp: Expense, key: bytes) -> None:
+    set_decrypted(exp, "description", decrypt_nullable(exp.description, key))
+    if exp.payer:
+        set_decrypted(exp.payer, "display_name", decrypt(exp.payer.display_name, key))
+    for p in (exp.participants or []):
+        if p.member:
+            set_decrypted(p.member, "display_name", decrypt(p.member.display_name, key))
 
 
 async def create_expense(
@@ -20,15 +35,17 @@ async def create_expense(
     description: str | None,
 ) -> Expense:
     """Create an expense record."""
+    key = _key()
     expense = Expense(
         group_id=group_id,
         payer_id=payer_id,
         amount_cents=amount_cents,
         currency=currency,
-        description=description,
+        description=encrypt_nullable(description, key),  # type: ignore[assignment]
     )
     session.add(expense)
     await session.flush()
+    set_decrypted(expense, "description", description)
     return expense
 
 
@@ -87,7 +104,11 @@ async def get_expenses(
         .order_by(Expense.created_at.desc())
         .limit(limit)
     )
-    return list(result.scalars().all())
+    expenses = list(result.scalars().all())
+    key = _key()
+    for exp in expenses:
+        _decrypt_expense(exp, key)
+    return expenses
 
 
 async def find_expenses_by_description(
@@ -105,11 +126,17 @@ async def find_expenses_by_description(
         .where(
             Expense.group_id == group_id,
             Expense.is_deleted == False,  # noqa: E712
-            Expense.description.ilike(f"%{description}%"),
         )
         .order_by(Expense.created_at.desc())
     )
-    return list(result.scalars().all())
+    expenses = list(result.scalars().all())
+    key = _key()
+    for exp in expenses:
+        _decrypt_expense(exp, key)
+    return [
+        e for e in expenses
+        if e.description and description.lower() in e.description.lower()  # type: ignore[union-attr]
+    ]
 
 
 

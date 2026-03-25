@@ -19,7 +19,6 @@ from piazza.core.exceptions import (
     GENERIC_ERROR_RESPONSE,
     UNAPPROVED_GROUP_RESPONSE,
 )
-from piazza.db.models.injection_log import InjectionLog
 from piazza.db.repositories.group import get_or_create_group
 from piazza.db.repositories.member import get_active_members, get_or_create_member
 from piazza.messaging.whatsapp.schemas import Message
@@ -44,24 +43,13 @@ def _strip_bot_mention(text: str, mentioned_jids: list[str]) -> str:
     return result.strip()
 
 
-async def _log_injection(
-    session: AsyncSession,
+def _log_injection(
     group_id: object,
     user_hash: str,
     layer: str,
     risk_score: float,
-    snippet: str,
 ) -> None:
-    """Log an injection-flagged message."""
-    entry = InjectionLog(
-        group_id=group_id,
-        user_hash=user_hash,
-        layer=layer,
-        risk_score=risk_score,
-        snippet=snippet[:100] if snippet else None,
-    )
-    session.add(entry)
-    await session.flush()
+    """Log an injection-flagged message via structured logging."""
     logger.warning(
         "injection_flagged",
         layer=layer,
@@ -69,7 +57,6 @@ async def _log_injection(
         user_hash=user_hash,
         risk_score=risk_score,
     )
-    await session.commit()
 
 
 async def _circuit_is_open(redis: Redis | None) -> bool:
@@ -145,18 +132,12 @@ async def process_message(
         # 2. Security: sanitize + injection screening
         sanitized, flagged_l1 = sanitize_input(text)
         if flagged_l1:
-            await _log_injection(
-                session, group.id, hash_phone(message.sender_jid),
-                "L1", 1.0, sanitized,
-            )
+            _log_injection(group.id, hash_phone(message.sender_jid), "L1", 1.0)
             return FLAGGED_RESPONSE
 
         screened, flagged_l2, risk = screen_for_injection(sanitized)
         if flagged_l2:
-            await _log_injection(
-                session, group.id, hash_phone(message.sender_jid),
-                "L2", risk, sanitized,
-            )
+            _log_injection(group.id, hash_phone(message.sender_jid), "L2", risk)
             return FLAGGED_RESPONSE
 
         # 3. Build agent context

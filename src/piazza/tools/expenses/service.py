@@ -374,7 +374,10 @@ async def update_expense(
             "old": expense.description,
             "new": new_description,
         })
-        expense.description = new_description
+        from piazza.config.settings import settings
+        from piazza.core.encryption import encrypt_nullable
+
+        expense.description = encrypt_nullable(new_description, settings.encryption_key_bytes)  # type: ignore[assignment]
 
     if new_currency is not None:
         changes.append({"field": "currency", "old": expense.currency, "new": new_currency})

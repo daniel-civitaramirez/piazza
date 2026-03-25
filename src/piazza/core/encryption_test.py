@@ -5,7 +5,14 @@ import os
 import pytest
 from cryptography.exceptions import InvalidTag
 
-from piazza.core.encryption import decrypt, encrypt, hash_phone
+from piazza.core.encryption import (
+    decrypt,
+    decrypt_nullable,
+    encrypt,
+    encrypt_nullable,
+    hash_phone,
+    validate_key,
+)
 
 
 @pytest.fixture
@@ -40,6 +47,28 @@ class TestEncryptDecrypt:
         wrong_key = os.urandom(32)
         with pytest.raises(InvalidTag):
             decrypt(ct, wrong_key)
+
+
+class TestNullableHelpers:
+    def test_encrypt_nullable_none(self, key: bytes):
+        assert encrypt_nullable(None, key) is None
+
+    def test_decrypt_nullable_none(self, key: bytes):
+        assert decrypt_nullable(None, key) is None
+
+    def test_encrypt_decrypt_nullable_round_trip(self, key: bytes):
+        ct = encrypt_nullable("hello", key)
+        assert ct is not None
+        assert decrypt_nullable(ct, key) == "hello"
+
+
+class TestValidateKey:
+    def test_wrong_length_raises(self):
+        with pytest.raises(RuntimeError, match="32 bytes"):
+            validate_key(os.urandom(16))
+
+    def test_correct_length_passes(self):
+        validate_key(os.urandom(32))
 
 
 class TestHashPhone:

@@ -8,8 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.config.settings import settings
-from piazza.core.encryption import encrypt, hash_phone
+from piazza.core.encryption import decrypt, encrypt, hash_phone, set_decrypted
 from piazza.db.models.member import Member
+
+
+def _key() -> bytes:
+    return settings.encryption_key_bytes
 
 
 async def get_or_create_member(
@@ -30,21 +34,24 @@ async def get_or_create_member(
     )
     member = result.scalar_one_or_none()
     if member is not None:
-        if member.display_name != display_name:
-            member.display_name = display_name
+        key = _key()
+        stored_name = decrypt(member.display_name, key)  # type: ignore[arg-type]
+        if stored_name != display_name:
+            member.display_name = encrypt(display_name, key)  # type: ignore[assignment]
+            await session.flush()
+        set_decrypted(member, "display_name", display_name)
         return member
 
-    if not settings.encryption_key:
-        raise ValueError("ENCRYPTION_KEY must be configured")
-    key = settings.encryption_key_bytes
+    key = _key()
     member = Member(
         group_id=group_id,
         wa_id_hash=wa_hash,
         wa_id_encrypted=encrypt(wa_id, key),
-        display_name=display_name,
+        display_name=encrypt(display_name, key),  # type: ignore[assignment]
     )
     session.add(member)
     await session.flush()
+    set_decrypted(member, "display_name", display_name)
     return member
 
 
@@ -75,26 +82,30 @@ async def get_or_create_member_by_jid(
     name = display_name or fallback_name
 
     if member is not None:
+        key = _key()
+        stored_name = decrypt(member.display_name, key)  # type: ignore[arg-type]
         # Only update display_name if we have a real pushName (not phone number)
-        if display_name and member.display_name != display_name:
-            member.display_name = display_name
+        if display_name and stored_name != display_name:
+            member.display_name = encrypt(display_name, key)  # type: ignore[assignment]
+            stored_name = display_name
+            await session.flush()
         # Re-activate if previously deactivated (e.g. member rejoined)
         if not member.is_active:
             member.is_active = True
+        set_decrypted(member, "display_name", stored_name)
         return member
 
-    if not settings.encryption_key:
-        raise ValueError("ENCRYPTION_KEY must be configured")
-    key = settings.encryption_key_bytes
+    key = _key()
     member = Member(
         group_id=group_id,
         wa_id_hash=wa_hash,
         wa_id_encrypted=encrypt(wa_jid, key),
-        display_name=name,
+        display_name=encrypt(name, key),  # type: ignore[assignment]
         is_active=True,
     )
     session.add(member)
     await session.flush()
+    set_decrypted(member, "display_name", name)
     return member
 
 
@@ -108,7 +119,11 @@ async def get_all_members(
     result = await session.execute(
         select(Member).where(Member.group_id == group_id)
     )
-    return list(result.scalars().all())
+    members = list(result.scalars().all())
+    key = _key()
+    for m in members:
+        set_decrypted(m, "display_name", decrypt(m.display_name, key))
+    return members
 
 
 async def get_active_members(
@@ -124,7 +139,11 @@ async def get_active_members(
             Member.is_active == True,  # noqa: E712
         )
     )
-    return list(result.scalars().all())
+    members = list(result.scalars().all())
+    key = _key()
+    for m in members:
+        set_decrypted(m, "display_name", decrypt(m.display_name, key))
+    return members
 
 
 async def deactivate_member(
@@ -143,6 +162,7 @@ async def deactivate_member(
     member = result.scalar_one_or_none()
     if member is not None:
         member.is_active = False
+        set_decrypted(member, "display_name", decrypt(member.display_name, _key()))
     return member
 
 
@@ -151,12 +171,15 @@ async def _get_member_by_name(
 ) -> Member | None:
     """Resolve a member by display name (case-insensitive exact match)."""
     result = await session.execute(
-        select(Member).where(
-            Member.group_id == group_id,
-            Member.display_name.ilike(display_name),
-        )
+        select(Member).where(Member.group_id == group_id)
     )
-    return result.scalar_one_or_none()
+    members = list(result.scalars().all())
+    key = _key()
+    for m in members:
+        set_decrypted(m, "display_name", decrypt(m.display_name, key))
+        if m.display_name.lower() == display_name.lower():  # type: ignore[union-attr]
+            return m
+    return None
 
 
 async def find_member_by_name(
@@ -176,14 +199,11 @@ async def find_member_by_name(
         return exact, []
 
     # Try substring match on active members
-    result = await session.execute(
-        select(Member).where(
-            Member.group_id == group_id,
-            Member.is_active == True,  # noqa: E712
-            Member.display_name.ilike(f"%{display_name}%"),
-        )
-    )
-    candidates = list(result.scalars().all())
+    members = await get_active_members(session, group_id)
+    candidates = [
+        m for m in members
+        if display_name.lower() in m.display_name.lower()  # type: ignore[union-attr]
+    ]
     if len(candidates) == 1:
         return candidates[0], []
     return None, candidates
