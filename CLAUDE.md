@@ -48,11 +48,18 @@ Both tiers are full agents with tool use (not classifiers). They share `BaseAgen
 ### Tool Pattern
 
 Tools follow a consistent layered pattern:
-- **handler.py**: Entry point — takes `(session, group_id, member_id, entities)` → returns response text
-- **service.py**: Business logic, calls repositories
-- **formatter.py**: Formats data for WhatsApp messages
-- **registry.py**: Maps tool names to handlers, defines tool schemas in Anthropic format
+- **handler.py**: Entry point — takes `(session, group_id, member_id, entities)` → returns `dict`
+- **service.py**: Business logic, returns model objects or raises exceptions
+- **registry.py**: Maps tool names to handlers, defines tool schemas in Anthropic format. `execute_tool` JSON-serializes handler dicts for the LLM.
 - **schemas.py**: `Entities` Pydantic model with optional fields matching tool input schemas
+
+### Structured Responses (Language-Agnostic)
+
+Handlers return structured dicts (not English strings). The LLM receives JSON tool results and generates natural-language responses in the user's language. No formatters — the LLM handles all i18n.
+
+Every handler dict has a `status` key: `"ok"`, `"empty"`, `"not_found"`, `"ambiguous"`, `"error"`, or `"list"`.
+
+Services return model objects; handlers convert to dicts. Services raise `NotFoundError(entity, number=, query=)` for missing items — handlers catch and build `{"status": "not_found", ...}` dicts.
 
 ### Expense Splits
 

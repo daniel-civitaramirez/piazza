@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from piazza.core.exceptions import ReminderError
+from piazza.core.exceptions import NotFoundError, ReminderError
 from piazza.db.repositories import note as note_repo
 from piazza.db.repositories import reminder as queries
 from piazza.tools.reminders import service
@@ -110,9 +110,9 @@ class TestReminderCRUD:
 
 class TestSetReminder:
     @pytest.mark.asyncio
-    async def test_set_reminder_creates_auto_note(self, db_session, sample_group):
-        """Setting a reminder creates a companion note in the knowledge base."""
-        result = await service.set_reminder(
+    async def test_set_reminder_returns_model(self, db_session, sample_group):
+        """Setting a reminder returns the Reminder model."""
+        reminder = await service.set_reminder(
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
@@ -120,13 +120,26 @@ class TestSetReminder:
             "in 2 hours",
             tz="UTC",
         )
-        assert "Reminder set" in result
+        assert reminder.message == "pack for trip"
+        assert reminder.trigger_at is not None
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_creates_auto_note(self, db_session, sample_group):
+        """Setting a reminder creates a companion note in the knowledge base."""
+        await service.set_reminder(
+            db_session,
+            sample_group.group_id,
+            sample_group.alice.id,
+            "pack for trip",
+            "in 2 hours",
+            tz="UTC",
+        )
 
         notes = await note_repo.find_notes(
             db_session, sample_group.group_id, "pack for trip"
         )
         assert len(notes) == 1
-        assert "Reminder: pack for trip" in notes[0].content
+        assert "pack for trip" in notes[0].content
         assert notes[0].tag == "pack for trip"
 
 
@@ -134,10 +147,10 @@ class TestReminderService:
     @pytest.mark.asyncio
     async def test_list_no_reminders(self, db_session, sample_group):
         result = await service.list_reminders(db_session, sample_group.group_id)
-        assert "No active" in result
+        assert result == []
 
     @pytest.mark.asyncio
-    async def test_list_numbered(self, db_session, sample_group):
+    async def test_list_returns_models(self, db_session, sample_group):
         trigger = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
         await queries.create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
@@ -150,12 +163,12 @@ class TestReminderService:
         await db_session.flush()
 
         result = await service.list_reminders(db_session, sample_group.group_id)
-        assert "#1" in result
-        assert "#2" in result
-        assert "item one" in result
+        assert len(result) == 2
+        assert result[0].message == "item one"
+        assert result[1].message == "item two"
 
     @pytest.mark.asyncio
-    async def test_cancel_by_number_service(self, db_session, sample_group):
+    async def test_cancel_by_number_returns_model(self, db_session, sample_group):
         trigger = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
         await queries.create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
@@ -163,14 +176,15 @@ class TestReminderService:
         )
         await db_session.flush()
 
-        result = await service.cancel_by_number(db_session, sample_group.group_id, 1)
-        assert "Cancelled" in result
-        assert "cancel me" in result
+        reminder = await service.cancel_by_number(db_session, sample_group.group_id, 1)
+        assert reminder.message == "cancel me"
 
     @pytest.mark.asyncio
-    async def test_cancel_nonexistent_number(self, db_session, sample_group):
-        result = await service.cancel_by_number(db_session, sample_group.group_id, 5)
-        assert "not found" in result
+    async def test_cancel_nonexistent_number_raises(self, db_session, sample_group):
+        with pytest.raises(NotFoundError) as exc_info:
+            await service.cancel_by_number(db_session, sample_group.group_id, 5)
+        assert exc_info.value.entity == "reminder"
+        assert exc_info.value.number == 5
 
 
 class TestSnooze:
@@ -183,8 +197,8 @@ class TestSnooze:
         )
         await db_session.flush()
 
-        result = await service.snooze(db_session, r.id, "1h")
-        assert "Snoozed" in result
+        reminder = await service.snooze(db_session, r.id, "1h")
+        assert reminder.message == "snooze me"
 
     @pytest.mark.asyncio
     async def test_snooze_30m(self, db_session, sample_group):
@@ -195,8 +209,8 @@ class TestSnooze:
         )
         await db_session.flush()
 
-        result = await service.snooze(db_session, r.id, "30m")
-        assert "Snoozed" in result
+        reminder = await service.snooze(db_session, r.id, "30m")
+        assert reminder.message == "snooze me"
 
 
 # ---------- Fire reminders task ----------
@@ -235,4 +249,5 @@ class TestAutoNoteHelper:
     def test_build_reminder_note(self):
         trigger = datetime(2026, 3, 15, 6, 0, tzinfo=timezone.utc)
         result = _build_reminder_note("pack for trip", trigger)
-        assert result == "Reminder: pack for trip \u2014 Mar 15 at 06:00 UTC"
+        assert "pack for trip" in result
+        assert "2026-03-15 06:00 UTC" in result

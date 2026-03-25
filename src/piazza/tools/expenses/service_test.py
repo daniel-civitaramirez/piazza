@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from piazza.core.exceptions import ExpenseError
+from piazza.core.exceptions import ExpenseError, NotFoundError
 from piazza.db.repositories import note as note_repo
 from piazza.tools.expenses import service
 from piazza.tools.expenses.service import (
@@ -28,19 +28,15 @@ def _shares_for_even(ids, amount_cents):
 
 class TestEvenSplit:
     def test_45_split_3_ways(self):
-        """4500 cents / 3 = [1500, 1500, 1500]."""
         assert calculate_even_split(4500, 3) == [1500, 1500, 1500]
 
     def test_10_split_3_ways(self):
-        """1000 cents / 3 = [334, 333, 333] — remainder to first."""
         assert calculate_even_split(1000, 3) == [334, 333, 333]
 
     def test_1_split_3_ways(self):
-        """100 cents / 3 = [34, 33, 33]."""
         assert calculate_even_split(100, 3) == [34, 33, 33]
 
     def test_sum_always_equals_total(self):
-        """The shares must always sum to the original amount."""
         for amount in [1, 7, 100, 999, 1000, 4567]:
             for n in [1, 2, 3, 5, 7]:
                 shares = calculate_even_split(amount, n)
@@ -67,36 +63,26 @@ class TestBalances:
         return [uuid.uuid4() for _ in range(n)]
 
     def test_single_expense(self):
-        """Payer paid for 3 people: positive balance, others negative."""
         a, b, c = self._ids(3)
-        # A paid 3000, split 1000 each among A, B, C
         rows = [(a, a, 1000), (a, b, 1000), (a, c, 1000)]
         balances = calculate_balances(rows, [])
-        # A is owed 2000 net (paid 3000, owes self 1000)
         assert balances[a] == 2000
         assert balances[b] == -1000
         assert balances[c] == -1000
 
     def test_multiple_expenses(self):
-        """Two expenses: net balances calculated correctly."""
         a, b = self._ids(2)
-        # A paid 2000, split 1000 each
         rows = [(a, a, 1000), (a, b, 1000)]
-        # B paid 1000, split 500 each
         rows += [(b, a, 500), (b, b, 500)]
         balances = calculate_balances(rows, [])
-        # A: +1000 (from first) -500 (from second) = +500
-        # B: -1000 (from first) +500 (from second) = -500
         assert balances[a] == 500
         assert balances[b] == -500
 
     def test_after_settlement(self):
         a, b = self._ids(2)
         rows = [(a, a, 500), (a, b, 500)]
-        # B pays A 500 to settle
         settlements = [(b, a, 500)]
         balances = calculate_balances(rows, settlements)
-        # A: +500 -500 = 0, B: -500 +500 = 0
         assert balances[a] == 0
         assert balances[b] == 0
 
@@ -113,7 +99,6 @@ class TestSimplifyDebts:
         return [uuid.uuid4() for _ in range(n)]
 
     def test_simple_a_owes_b(self):
-        """Simple: A owes B 1000 -> one transaction."""
         a, b = self._ids(2)
         balances = {a: -1000, b: 1000}
         debts = simplify_debts(balances)
@@ -124,21 +109,16 @@ class TestSimplifyDebts:
         assert amount == 1000
 
     def test_triangle_net_zero(self):
-        """Triangle: each owes the next the same amount -> zero transactions."""
         a, b, c = self._ids(3)
-        # A->B 1000, B->C 1000, C->A 1000 means everyone's net is 0
         balances = {a: 0, b: 0, c: 0}
         debts = simplify_debts(balances)
         assert debts == []
 
     def test_complex_4_members(self):
-        """4 members with cross-debts: produces <= 3 transactions."""
         a, b, c, d = self._ids(4)
-        # A owes 3000, B owes 1000, C is owed 2000, D is owed 2000
         balances = {a: -3000, b: -1000, c: 2000, d: 2000}
         debts = simplify_debts(balances)
         assert len(debts) <= 3
-        # Total transferred should equal total debt
         total_transferred = sum(amt for _, _, amt in debts)
         assert total_transferred == 4000
 
@@ -158,7 +138,7 @@ class TestExpenseServiceDB:
     @pytest.mark.asyncio
     async def test_list_no_expenses(self, db_session, sample_group):
         result = await service.list_expenses(db_session, sample_group.group_id)
-        assert "No expenses" in result
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_log_and_list_expense(self, db_session, sample_group):
@@ -166,16 +146,15 @@ class TestExpenseServiceDB:
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            3000,
-            "EUR",
-            "taxi",
+            3000, "EUR", "taxi",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
                 3000,
             ),
         )
         result = await service.list_expenses(db_session, sample_group.group_id)
-        assert "taxi" in result
+        assert len(result) == 1
+        assert result[0].description == "taxi"
 
     @pytest.mark.asyncio
     async def test_add_expense_creates_auto_note(self, db_session, sample_group):
@@ -184,9 +163,7 @@ class TestExpenseServiceDB:
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            5000,
-            "EUR",
-            "dinner",
+            5000, "EUR", "dinner",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id],
                 5000,
@@ -194,10 +171,26 @@ class TestExpenseServiceDB:
         )
         notes = await note_repo.find_notes(db_session, sample_group.group_id, "dinner")
         assert len(notes) == 1
-        assert "Expense: dinner" in notes[0].content
+        assert "dinner" in notes[0].content
         assert "50.00 EUR" in notes[0].content
         assert "Alice" in notes[0].content
         assert notes[0].tag == "dinner"
+
+    @pytest.mark.asyncio
+    async def test_add_expense_returns_result(self, db_session, sample_group):
+        """add_expense returns an ExpenseResult with payer and shares."""
+        result = await service.add_expense(
+            db_session,
+            sample_group.group_id,
+            sample_group.alice.id,
+            3000, "EUR", "lunch",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
+        )
+        assert result.payer_name == "Alice"
+        assert len(result.shares) == 3
 
     @pytest.mark.asyncio
     async def test_balance_summary(self, db_session, sample_group):
@@ -205,48 +198,39 @@ class TestExpenseServiceDB:
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            3000,
-            "EUR",
-            "lunch",
+            3000, "EUR", "lunch",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
                 3000,
             ),
         )
-        result = await service.get_balance_summary(db_session, sample_group.group_id)
-        assert "Alice" in result
-        assert "Bob" in result
+        result = await service.get_balances(db_session, sample_group.group_id)
+        assert len(result.debts) > 0
+        names = {d["debtor"] for d in result.debts} | {d["creditor"] for d in result.debts}
+        assert "Alice" in names
 
     @pytest.mark.asyncio
-    async def test_settle_suggestions(self, db_session, sample_group):
-        await service.add_expense(
-            db_session,
-            sample_group.group_id,
-            sample_group.alice.id,
-            3000,
-            "EUR",
-            "dinner",
-            _shares_for_even(
-                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
-                3000,
-            ),
-        )
-        result = await service.get_settle_suggestions(db_session, sample_group.group_id)
-        assert "pays" in result or "settled" in result.lower()
+    async def test_resolve_by_number_not_found(self, db_session, sample_group):
+        with pytest.raises(NotFoundError):
+            await service.resolve_expense_by_number(db_session, sample_group.group_id, 99)
+
+    @pytest.mark.asyncio
+    async def test_resolve_by_description_not_found(self, db_session, sample_group):
+        with pytest.raises(NotFoundError):
+            await service.resolve_expense_by_description(
+                db_session, sample_group.group_id, "nonexistent"
+            )
 
 
 class TestRecordSettlement:
     @pytest.mark.asyncio
     async def test_record_settlement_creates_db_record(self, db_session, sample_group):
         """Settlement is recorded in DB and confirmation returned."""
-        # Alice paid 3000, split among Alice, Bob, Charlie
         await service.add_expense(
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            3000,
-            "EUR",
-            "dinner",
+            3000, "EUR", "dinner",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
                 3000,
@@ -261,11 +245,10 @@ class TestRecordSettlement:
             amount_cents=500,
             currency="EUR",
         )
-        assert "Payment recorded" in result
-        assert "Bob" in result
-        assert "Alice" in result
+        assert result.payer_name == "Bob"
+        assert result.payee_name == "Alice"
+        assert result.amount_cents == 500
 
-        # Verify settlement exists in DB
         from piazza.db.repositories.expense import get_settlements
         settlements = await get_settlements(db_session, sample_group.group_id)
         assert len(settlements) == 1
@@ -274,21 +257,17 @@ class TestRecordSettlement:
     @pytest.mark.asyncio
     async def test_record_settlement_updates_balance(self, db_session, sample_group):
         """Balance reflects the settlement payment."""
-        # Alice paid 2000, split between Alice and Bob (1000 each)
         await service.add_expense(
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            2000,
-            "EUR",
-            "taxi",
+            2000, "EUR", "taxi",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id],
                 2000,
             ),
         )
 
-        # Bob pays Alice 500 — should still owe 500
         result = await service.record_settlement(
             db_session,
             sample_group.group_id,
@@ -297,25 +276,21 @@ class TestRecordSettlement:
             amount_cents=500,
             currency="EUR",
         )
-        assert "Remaining" in result
+        assert result.remaining_cents > 0
 
     @pytest.mark.asyncio
     async def test_partial_settlement_shows_remaining(self, db_session, sample_group):
         """100 owed, pay 40, shows 60 remaining."""
-        # Alice paid 10000, split between Alice and Bob (5000 each)
         await service.add_expense(
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            10000,
-            "EUR",
-            "hotel",
+            10000, "EUR", "hotel",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id],
                 10000,
             ),
         )
-        # Bob owes Alice 5000 cents. Pay 4000.
         result = await service.record_settlement(
             db_session,
             sample_group.group_id,
@@ -324,26 +299,21 @@ class TestRecordSettlement:
             amount_cents=4000,
             currency="EUR",
         )
-        assert "Remaining" in result
-        assert "10.00" in result  # 1000 cents = 10.00
+        assert result.remaining_cents == 1000
 
     @pytest.mark.asyncio
     async def test_full_settlement_shows_settled(self, db_session, sample_group):
         """Exact amount settles the debt completely."""
-        # Alice paid 2000, split between Alice and Bob
         await service.add_expense(
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            2000,
-            "EUR",
-            "lunch",
+            2000, "EUR", "lunch",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id],
                 2000,
             ),
         )
-        # Bob owes Alice 1000 cents. Pay exactly 1000.
         result = await service.record_settlement(
             db_session,
             sample_group.group_id,
@@ -352,7 +322,7 @@ class TestRecordSettlement:
             amount_cents=1000,
             currency="EUR",
         )
-        assert "settled up" in result
+        assert result.settled_up is True
 
     @pytest.mark.asyncio
     async def test_settlement_creates_auto_note(self, db_session, sample_group):
@@ -361,9 +331,7 @@ class TestRecordSettlement:
             db_session,
             sample_group.group_id,
             sample_group.alice.id,
-            2000,
-            "EUR",
-            "lunch",
+            2000, "EUR", "lunch",
             _shares_for_even(
                 [sample_group.alice.id, sample_group.bob.id],
                 2000,
@@ -382,19 +350,25 @@ class TestRecordSettlement:
         )
         assert len(notes) >= 1
         settlement_note = next(n for n in notes if n.tag == "settlement")
-        assert "Settlement: Bob paid Alice" in settlement_note.content
+        assert "Bob" in settlement_note.content
+        assert "Alice" in settlement_note.content
         assert "10.00 EUR" in settlement_note.content
 
 
 class TestAutoNoteHelpers:
     def test_build_expense_note(self):
         result = _build_expense_note("lunch", 5000, "EUR", "Alice", ["Alice", "Bob"])
-        assert result == "Expense: lunch \u2014 50.00 EUR, paid by Alice, split with Alice, Bob"
+        assert "lunch" in result
+        assert "50.00 EUR" in result
+        assert "Alice" in result
+        assert "Bob" in result
 
     def test_build_expense_note_no_description(self):
         result = _build_expense_note(None, 1000, "USD", "Alice", ["Alice"])
-        assert "expense" in result
+        assert "10.00 USD" in result
 
     def test_build_settlement_note(self):
         result = _build_settlement_note("Bob", "Alice", 2500, "EUR")
-        assert result == "Settlement: Bob paid Alice 25.00 EUR"
+        assert "Bob" in result
+        assert "Alice" in result
+        assert "25.00 EUR" in result

@@ -28,7 +28,7 @@ async def fire_reminders(
     for reminder in due:
         group = reminder.group
         group_jid = group.wa_jid if group else ""
-        text = f"Reminder: {reminder.message}"
+        text = f"⏰ {reminder.message}"
 
         payloads.append((group_jid, text))
         await reminder_repo.update_reminder_status(session, reminder.id, "fired")

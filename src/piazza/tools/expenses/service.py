@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from piazza.core.exceptions import ExpenseError
+from piazza.core.exceptions import ExpenseError, NotFoundError
 from piazza.db.models.expense import Expense
 from piazza.db.repositories import expense as expense_repo
 from piazza.db.repositories import note as note_repo
 from piazza.db.repositories.member import get_all_members
-from piazza.tools.expenses import formatter
 
 # ---------- Private helpers ----------
 
@@ -25,9 +25,8 @@ def _build_expense_note(
 ) -> str:
     """Build a readable knowledge-base note from an expense."""
     amount = f"{amount_cents / 100:.2f} {currency}"
-    desc = description or "expense"
     names = ", ".join(participant_names)
-    return f"Expense: {desc} \u2014 {amount}, paid by {payer_name}, split with {names}"
+    return f"{description} \u2014 {amount}, {payer_name}, {names}"
 
 
 def _build_settlement_note(
@@ -38,7 +37,71 @@ def _build_settlement_note(
 ) -> str:
     """Build a readable knowledge-base note from a settlement."""
     amount = f"{amount_cents / 100:.2f} {currency}"
-    return f"Settlement: {payer_name} paid {payee_name} {amount}"
+    return f"{payer_name} → {payee_name} {amount}"
+
+
+def _member_map(members: list) -> dict[uuid.UUID, str]:
+    return {m.id: m.display_name for m in members}
+
+
+def _named_shares(
+    shares: list[tuple[uuid.UUID, int]], member_map: dict[uuid.UUID, str]
+) -> list[dict]:
+    return [
+        {"name": member_map[mid], "amount_cents": cents}
+        for mid, cents in shares
+    ]
+
+
+# ---------- Result types ----------
+
+
+@dataclass
+class ExpenseResult:
+    """Data returned after creating an expense."""
+
+    expense: Expense
+    payer_name: str
+    shares: list[dict]  # [{"name": str, "amount_cents": int}]
+
+
+@dataclass
+class SettlementResult:
+    """Data returned after recording a settlement."""
+
+    payer_name: str
+    payee_name: str
+    amount_cents: int
+    currency: str
+    remaining_cents: int
+    settled_up: bool
+
+
+@dataclass
+class BalanceResult:
+    """Data returned from balance queries."""
+
+    debts: list[dict]  # [{"debtor": str, "creditor": str, "amount_cents": int}]
+
+
+def expense_to_dict(exp: Expense, number: int | None = None) -> dict:
+    """Convert an Expense model to a structured dict."""
+    payer = exp.payer.display_name
+    shares = [
+        {"name": p.member.display_name, "amount_cents": p.share_cents}
+        for p in (exp.participants or [])
+        if p.member
+    ]
+    d: dict = {
+        "amount_cents": exp.amount_cents,
+        "currency": exp.currency,
+        "description": exp.description,
+        "payer": payer,
+        "shares": shares,
+    }
+    if number is not None:
+        d["number"] = number
+    return d
 
 
 # ---------- Pure functions ----------
@@ -73,12 +136,10 @@ def calculate_balances(
     balances: dict[uuid.UUID, int] = {}
 
     for payer_id, participant_id, share_cents in expense_rows:
-        # Payer paid on behalf of participant
         balances[payer_id] = balances.get(payer_id, 0) + share_cents
         balances[participant_id] = balances.get(participant_id, 0) - share_cents
 
     for payer_id, payee_id, amount_cents in settlements:
-        # payer sent money to payee (reduces payer's debt, reduces payee's credit)
         balances[payer_id] = balances.get(payer_id, 0) + amount_cents
         balances[payee_id] = balances.get(payee_id, 0) - amount_cents
 
@@ -101,7 +162,6 @@ def simplify_debts(
         elif balance > 0:
             creditors.append((member_id, balance))
 
-    # Sort descending by amount for greedy matching
     debtors.sort(key=lambda x: x[1], reverse=True)
     creditors.sort(key=lambda x: x[1], reverse=True)
 
@@ -143,21 +203,21 @@ async def add_expense(
     currency: str,
     description: str | None,
     shares: list[tuple[uuid.UUID, int]],
-) -> str:
-    """Create an expense with participants and return confirmation string."""
+) -> ExpenseResult:
+    """Create an expense with participants."""
     expense = await expense_repo.create_expense(
         session, group_id, payer_id, amount_cents, currency, description
     )
     await expense_repo.create_expense_participants(session, expense.id, shares)
 
     members = await get_all_members(session, group_id)
-    member_map = {m.id: m.display_name for m in members}
+    mmap = _member_map(members)
 
     # Auto-note for knowledge base
-    participant_names = [member_map.get(mid, "Unknown") for mid, _ in shares]
+    participant_names = [mmap[mid] for mid, _ in shares]
     note_content = _build_expense_note(
         description, amount_cents, currency,
-        member_map.get(payer_id, "Unknown"), participant_names,
+        mmap[payer_id], participant_names,
     )
     await note_repo.create_note(
         session, group_id, payer_id,
@@ -166,14 +226,15 @@ async def add_expense(
 
     await session.commit()
 
-    return formatter.format_expense_confirmation(
-        amount_cents, currency, description, member_map.get(payer_id, "Unknown"),
-        [(member_map.get(mid, "Unknown"), s) for mid, s in shares],
+    return ExpenseResult(
+        expense=expense,
+        payer_name=mmap[payer_id],
+        shares=_named_shares(shares, mmap),
     )
 
 
-async def get_balance_summary(session: AsyncSession, group_id: uuid.UUID) -> str:
-    """Calculate and format balance summary."""
+async def get_balances(session: AsyncSession, group_id: uuid.UUID) -> BalanceResult:
+    """Calculate net balances as simplified pairwise debts."""
     expense_rows = await expense_repo.get_expense_shares(session, group_id)
     settlements_raw = await expense_repo.get_settlements(session, group_id)
     settlement_tuples = [
@@ -184,26 +245,12 @@ async def get_balance_summary(session: AsyncSession, group_id: uuid.UUID) -> str
     debts = simplify_debts(balances)
 
     members = await get_all_members(session, group_id)
-    member_map = {m.id: m.display_name for m in members}
+    mmap = _member_map(members)
 
-    return formatter.format_balance_summary(debts, member_map)
-
-
-async def get_settle_suggestions(session: AsyncSession, group_id: uuid.UUID) -> str:
-    """Calculate simplified debts and format suggestions."""
-    expense_rows = await expense_repo.get_expense_shares(session, group_id)
-    settlements_raw = await expense_repo.get_settlements(session, group_id)
-    settlement_tuples = [
-        (s.payer_id, s.payee_id, s.amount_cents) for s in settlements_raw
-    ]
-
-    balances = calculate_balances(expense_rows, settlement_tuples)
-    debts = simplify_debts(balances)
-
-    members = await get_all_members(session, group_id)
-    member_map = {m.id: m.display_name for m in members}
-
-    return formatter.format_settle_suggestions(debts, member_map)
+    return BalanceResult(debts=[
+        {"debtor": mmap[d_id], "creditor": mmap[c_id], "amount_cents": amt}
+        for d_id, c_id, amt in debts
+    ])
 
 
 async def record_settlement(
@@ -213,14 +260,14 @@ async def record_settlement(
     payee_id: uuid.UUID,
     amount_cents: int,
     currency: str,
-) -> str:
-    """Record a settlement payment and return confirmation with remaining balance."""
+) -> SettlementResult:
+    """Record a settlement payment."""
     await expense_repo.create_settlement(session, group_id, payer_id, payee_id, amount_cents)
 
     members = await get_all_members(session, group_id)
-    member_map = {m.id: m.display_name for m in members}
-    payer_name = member_map.get(payer_id, "Unknown")
-    payee_name = member_map.get(payee_id, "Unknown")
+    mmap = _member_map(members)
+    payer_name = mmap[payer_id]
+    payee_name = mmap[payee_id]
 
     # Auto-note for knowledge base
     note_content = _build_settlement_note(payer_name, payee_name, amount_cents, currency)
@@ -238,63 +285,62 @@ async def record_settlement(
         (s.payer_id, s.payee_id, s.amount_cents) for s in settlements_raw
     ]
     balances = calculate_balances(expense_rows, settlement_tuples)
-
-    # Remaining: if payer's balance is negative, they still owe.
-    # But we want the pairwise debt, not aggregate.
-    # Use simplified debts to find if payer still owes payee.
     debts = simplify_debts(balances)
-    remaining_cents: int | None = None
+
+    remaining_cents = 0
     for debtor_id, creditor_id, amt in debts:
         if debtor_id == payer_id and creditor_id == payee_id:
             remaining_cents = amt
             break
 
-    return formatter.format_settlement_confirmation(
-        payer_name, payee_name, amount_cents, currency, remaining_cents
+    return SettlementResult(
+        payer_name=payer_name,
+        payee_name=payee_name,
+        amount_cents=amount_cents,
+        currency=currency,
+        remaining_cents=remaining_cents,
+        settled_up=remaining_cents == 0,
     )
 
 
-
-async def delete_expense_by_number(
+async def resolve_expense_by_number(
     session: AsyncSession, group_id: uuid.UUID, number: int
-) -> str:
-    """Soft-delete the Nth recent expense (1-indexed, same order as list_expenses)."""
+) -> Expense:
+    """Resolve an expense by its 1-indexed list position.
+
+    Raises NotFoundError if out of range.
+    """
     expenses = await expense_repo.get_expenses(session, group_id)
     if number < 1 or number > len(expenses):
-        total = len(expenses)
-        if total == 0:
-            return "No expenses to delete."
-        return f"Expense #{number} not found. You have {total} recent expense(s)."
-
-    expense = expenses[number - 1]
-    expense.is_deleted = True
-    await session.flush()
-    await session.commit()
-    desc = expense.description or "expense"
-    amount = f"{expense.amount_cents / 100:.2f}"
-    return f"Deleted: {desc} ({amount} {expense.currency})"
+        raise NotFoundError("expense", number=number, total=len(expenses))
+    return expenses[number - 1]
 
 
-async def delete_expense_by_description(
+async def resolve_expense_by_description(
     session: AsyncSession, group_id: uuid.UUID, description: str
-) -> str:
-    """Find and soft-delete expense by description match."""
+) -> Expense | list[Expense]:
+    """Resolve an expense by description match.
+
+    Returns single Expense if exactly one match.
+    Returns list[Expense] if multiple matches (ambiguous).
+    Raises NotFoundError if no matches.
+    """
     matches = await expense_repo.find_expenses_by_description(
         session, group_id, description
     )
-
     if not matches:
-        return f'No expense matching "{description}" found.'
-
+        raise NotFoundError("expense", query=description)
     if len(matches) == 1:
-        matches[0].is_deleted = True
-        await session.flush()
-        await session.commit()
-        desc = matches[0].description or "expense"
-        amount = f"{matches[0].amount_cents / 100:.2f}"
-        return f"Deleted: {desc} ({amount} {matches[0].currency})"
+        return matches[0]
+    return matches
 
-    return formatter.format_expense_disambiguation(matches)
+
+async def delete_expense(session: AsyncSession, expense: Expense) -> Expense:
+    """Soft-delete an already-resolved expense."""
+    expense.is_deleted = True
+    await session.flush()
+    await session.commit()
+    return expense
 
 
 async def update_expense(
@@ -305,57 +351,68 @@ async def update_expense(
     new_description: str | None = None,
     new_payer_id: uuid.UUID | None = None,
     new_shares: list[tuple[uuid.UUID, int]] | None = None,
-) -> str:
-    """Update fields on an already-found expense."""
+) -> tuple[Expense, list[dict]]:
+    """Update fields on an already-resolved expense.
+
+    Returns (expense, changes) where changes is a list of field change dicts.
+    Raises ExpenseError if nothing to update.
+    """
     has_changes = any(v is not None for v in (
         new_amount_cents, new_currency, new_description,
         new_payer_id, new_shares,
     ))
     if not has_changes:
-        return "Nothing to update. Specify a new amount, currency, or description."
+        raise ExpenseError("nothing_to_update")
 
     members = await get_all_members(session, expense.group_id)
-    member_map = {m.id: m.display_name for m in members}
-    changes: list[str] = []
+    mmap = _member_map(members)
+    changes: list[dict] = []
 
     if new_description is not None:
-        old_desc = expense.description or "expense"
+        changes.append({
+            "field": "description",
+            "old": expense.description,
+            "new": new_description,
+        })
         expense.description = new_description
-        changes.append(f"Description: {old_desc} → {new_description}")
 
     if new_currency is not None:
+        changes.append({"field": "currency", "old": expense.currency, "new": new_currency})
         expense.currency = new_currency
-        changes.append(f"Currency: → {new_currency}")
 
     if new_payer_id is not None:
-        old_payer = member_map.get(expense.payer_id, "Unknown")
-        new_payer = member_map.get(new_payer_id, "Unknown")
+        changes.append({
+            "field": "payer",
+            "old": mmap[expense.payer_id],
+            "new": mmap[new_payer_id],
+        })
         expense.payer_id = new_payer_id
-        changes.append(f"Payer: {old_payer} → {new_payer}")
 
     if new_amount_cents is not None:
-        old_amount = f"{expense.amount_cents / 100:.2f}"
+        changes.append({
+            "field": "amount",
+            "old_cents": expense.amount_cents,
+            "new_cents": new_amount_cents,
+        })
         expense.amount_cents = new_amount_cents
-        changes.append(f"Amount: {old_amount} → {new_amount_cents / 100:.2f}")
 
     if new_shares is not None:
         await expense_repo.replace_expense_participants(
             session, expense.id, new_shares
         )
-        share_parts = [
-            f"{member_map.get(mid, 'Unknown')}: {cents / 100:.2f}"
-            for mid, cents in new_shares
-        ]
-        changes.append(f"Split: {', '.join(share_parts)}")
+        changes.append({
+            "field": "shares",
+            "new_shares": _named_shares(new_shares, mmap),
+        })
 
     await session.flush()
     await session.commit()
-    return formatter.format_update_confirmation(expense, changes)
+
+    return expense, changes
 
 
-async def list_expenses(session: AsyncSession, group_id: uuid.UUID) -> str:
+async def list_expenses(
+    session: AsyncSession, group_id: uuid.UUID
+) -> list[Expense]:
     """List recent expenses."""
-    expenses = await expense_repo.get_expenses(session, group_id)
-    if not expenses:
-        return "No expenses logged yet."
-    return formatter.format_expense_list(expenses)
+    return await expense_repo.get_expenses(session, group_id)

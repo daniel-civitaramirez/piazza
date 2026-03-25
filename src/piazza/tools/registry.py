@@ -6,6 +6,7 @@ to OpenAI format internally. Each tool maps to an existing handler function.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from piazza.tools.reminders.handler import (
     handle_reminder_snooze,
     handle_set_timezone,
 )
+from piazza.tools.responses import Reason, error_response
 from piazza.tools.schemas import Entities
 from piazza.tools.status.status import handle_status
 
@@ -47,7 +49,7 @@ logger = structlog.get_logger()
 
 HandlerFunc = Callable[
     [AsyncSession, uuid.UUID, uuid.UUID, Entities],
-    Awaitable[str],
+    Awaitable[dict],
 ]
 
 
@@ -56,7 +58,7 @@ class ToolResult:
     """Structured result from a tool handler."""
 
     success: bool
-    response_text: str
+    response_text: str  # JSON-serialized dict
 
 
 # --- Tool definitions (Anthropic format) ---
@@ -116,17 +118,14 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "settle_expense",
-        "description": (
-            "Record a settlement payment between members,"
-            " or show settle-up suggestions if no amount given."
-        ),
+        "description": "Record a settlement payment between members.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "The member being paid (required when amount is given)",
+                    "description": "The member being paid (exactly one name)",
                 },
                 "amount": {
                     "type": "number",
@@ -134,6 +133,7 @@ AGENT_TOOLS: list[dict] = [
                 },
                 "currency": {"type": "string"},
             },
+            "required": ["amount", "participants"],
         },
     },
     {
@@ -445,18 +445,24 @@ async def execute_tool(
     """Execute a tool call by mapping it to a handler function."""
     handler = TOOL_REGISTRY.get(name)
     if handler is None:
-        return ToolResult(success=False, response_text=f"Unknown tool: {name}")
+        return ToolResult(
+            success=False,
+            response_text=json.dumps(error_response(Reason.INTERNAL_ERROR, tool=name)),
+        )
 
     try:
         entities = Entities(**arguments)
-        response_text = await handler(session, group_id, member_id, entities)
-        return ToolResult(success=True, response_text=response_text)
+        result_dict = await handler(session, group_id, member_id, entities)
+        return ToolResult(success=True, response_text=json.dumps(result_dict))
     except PiazzaError as exc:
         logger.warning("tool_domain_error", tool=name, error=str(exc))
-        return ToolResult(success=False, response_text=str(exc))
+        return ToolResult(
+            success=False,
+            response_text=json.dumps(error_response(Reason.INTERNAL_ERROR, detail=str(exc))),
+        )
     except Exception:
         logger.exception("tool_execution_error", tool=name)
         return ToolResult(
             success=False,
-            response_text=f"Failed to execute {name}. Please try again.",
+            response_text=json.dumps(error_response(Reason.INTERNAL_ERROR)),
         )

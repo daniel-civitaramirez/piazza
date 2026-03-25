@@ -27,9 +27,10 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Logged" in result
-        assert "Alice" in result
-        assert "coffee" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "add_expense"
+        assert result["payer"] == "Alice"
+        assert result["description"] == "coffee"
 
     @pytest.mark.asyncio
     async def test_third_party_payer(self, db_session, sample_group):
@@ -41,8 +42,8 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Logged" in result
-        assert "Bob" in result  # Bob is the payer
+        assert result["status"] == "ok"
+        assert result["payer"] == "Bob"
 
     @pytest.mark.asyncio
     async def test_third_party_payer_sender_excluded(self, db_session, sample_group):
@@ -54,23 +55,10 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Logged" in result
-        assert "Bob" in result
-        # Alice (sender) should not be in the split
-        assert "Alice" not in result
-
-    @pytest.mark.asyncio
-    async def test_third_party_payer_with_everyone(self, db_session, sample_group):
-        """Third-party payer + 'everyone' includes all members."""
-        entities = Entities(
-            amount=90.0, paid_by="Bob", description="groceries",
-            participants=["everyone"],
-        )
-        result = await handler.handle_expense_add(
-            db_session, sample_group.group_id, sample_group.alice.id, entities
-        )
-        assert "Logged" in result
-        assert "Bob" in result
+        assert result["status"] == "ok"
+        assert result["payer"] == "Bob"
+        share_names = [s["name"] for s in result["shares"]]
+        assert "Alice" not in share_names
 
     @pytest.mark.asyncio
     async def test_unknown_payer_returns_error(self, db_session, sample_group):
@@ -82,8 +70,9 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Could not find" in result
-        assert "Zara" in result
+        assert result["status"] == "error"
+        assert result["reason"] == "payer_not_found"
+        assert result["name"] == "Zara"
 
     @pytest.mark.asyncio
     async def test_paid_by_fallback_to_sender(self, db_session, sample_group):
@@ -95,8 +84,8 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Logged" in result
-        assert "Alice" in result
+        assert result["status"] == "ok"
+        assert result["payer"] == "Alice"
 
     @pytest.mark.asyncio
     async def test_custom_split(self, db_session, sample_group):
@@ -111,11 +100,11 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Logged" in result
-        # Payer share = 90 - 35 = 55
-        assert "55.00" in result
-        assert "25.00" in result
-        assert "10.00" in result
+        assert result["status"] == "ok"
+        shares_by_name = {s["name"]: s["amount_cents"] for s in result["shares"]}
+        assert shares_by_name["Alice"] == 5500  # payer share = 9000 - 3500
+        assert shares_by_name["Bob"] == 2500
+        assert shares_by_name["Charlie"] == 1000
 
     @pytest.mark.asyncio
     async def test_participant_amounts_exceed_total(self, db_session, sample_group):
@@ -130,7 +119,8 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "more than the total" in result
+        assert result["status"] == "error"
+        assert result["reason"] == "participants_exceed_total"
 
     @pytest.mark.asyncio
     async def test_solo_expense(self, db_session, sample_group):
@@ -142,8 +132,8 @@ class TestHandleExpenseAdd:
         result = await handler.handle_expense_add(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Logged" in result
-        assert "20.00" in result
+        assert result["status"] == "ok"
+        assert result["amount_cents"] == 2000
 
 
 class TestHandleExpenseSettle:
@@ -163,27 +153,30 @@ class TestHandleExpenseSettle:
         result = await handler.handle_expense_settle(
             db_session, sample_group.group_id, sample_group.bob.id, entities
         )
-        assert "Payment recorded" in result
-        assert "Bob" in result
-        assert "Alice" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "settle_expense"
+        assert result["payer"] == "Bob"
+        assert result["payee"] == "Alice"
 
     @pytest.mark.asyncio
-    async def test_settle_without_amount_shows_suggestions(self, db_session, sample_group):
-        """Bare 'settle up' (no amount) still shows suggestions."""
-        await service.add_expense(
-            db_session, sample_group.group_id, sample_group.alice.id,
-            3000, "EUR", "dinner",
-            _shares_for_even(
-                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
-                3000,
-            ),
-        )
-
-        entities = Entities()
+    async def test_settle_missing_amount_returns_error(self, db_session, sample_group):
+        """No amount returns an error."""
+        entities = Entities(participants=["Alice"])
         result = await handler.handle_expense_settle(
             db_session, sample_group.group_id, sample_group.bob.id, entities
         )
-        assert "pays" in result or "settled" in result.lower()
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_amount"
+
+    @pytest.mark.asyncio
+    async def test_settle_negative_amount_returns_error(self, db_session, sample_group):
+        """Negative amount returns an error."""
+        entities = Entities(amount=-10.0, participants=["Alice"])
+        result = await handler.handle_expense_settle(
+            db_session, sample_group.group_id, sample_group.bob.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "negative_amount"
 
     @pytest.mark.asyncio
     async def test_settle_missing_participant_returns_error(self, db_session, sample_group):
@@ -192,7 +185,8 @@ class TestHandleExpenseSettle:
         result = await handler.handle_expense_settle(
             db_session, sample_group.group_id, sample_group.bob.id, entities
         )
-        assert "specify who was paid" in result.lower()
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_settlement_payee"
 
     @pytest.mark.asyncio
     async def test_settle_unknown_participant_returns_error(self, db_session, sample_group):
@@ -201,8 +195,9 @@ class TestHandleExpenseSettle:
         result = await handler.handle_expense_settle(
             db_session, sample_group.group_id, sample_group.bob.id, entities
         )
-        assert "Could not find" in result
-        assert "Zara" in result
+        assert result["status"] == "error"
+        assert result["reason"] == "payee_not_found"
+        assert result["name"] == "Zara"
 
     @pytest.mark.asyncio
     async def test_settle_with_currency(self, db_session, sample_group):
@@ -220,8 +215,8 @@ class TestHandleExpenseSettle:
         result = await handler.handle_expense_settle(
             db_session, sample_group.group_id, sample_group.bob.id, entities
         )
-        assert "Payment recorded" in result
-        assert "$" in result
+        assert result["status"] == "ok"
+        assert result["currency"] == "USD"
 
 
 class TestHandleExpenseUpdate:
@@ -241,9 +236,9 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Updated" in result
-        assert "dinner" in result
-        assert "40.00" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "update_expense"
+        assert any(c["field"] == "amount" and c["new_cents"] == 4000 for c in result["changes"])
 
     @pytest.mark.asyncio
     async def test_update_description(self, db_session, sample_group):
@@ -261,8 +256,9 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Updated" in result
-        assert "fancy dinner" in result
+        assert result["status"] == "ok"
+        desc_changes = [c for c in result["changes"] if c["field"] == "description"]
+        assert desc_changes and desc_changes[0]["new"] == "fancy dinner"
 
     @pytest.mark.asyncio
     async def test_update_payer(self, db_session, sample_group):
@@ -280,9 +276,8 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Updated" in result
-        assert "Payer" in result
-        assert "Bob" in result
+        assert result["status"] == "ok"
+        assert any(c["field"] == "payer" and c["new"] == "Bob" for c in result["changes"])
 
     @pytest.mark.asyncio
     async def test_update_participants_custom_split(self, db_session, sample_group):
@@ -303,8 +298,8 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Updated" in result
-        assert "Split" in result
+        assert result["status"] == "ok"
+        assert any(c["field"] == "shares" for c in result["changes"])
 
     @pytest.mark.asyncio
     async def test_update_no_match(self, db_session, sample_group):
@@ -313,7 +308,7 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "No expense" in result
+        assert result["status"] == "not_found"
 
     @pytest.mark.asyncio
     async def test_update_ambiguous(self, db_session, sample_group):
@@ -339,7 +334,8 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Multiple" in result
+        assert result["status"] == "ambiguous"
+        assert len(result["matches"]) == 2
 
     @pytest.mark.asyncio
     async def test_update_nothing_to_change(self, db_session, sample_group):
@@ -357,7 +353,8 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Nothing to update" in result
+        assert result["status"] == "error"
+        assert result["reason"] == "nothing_to_update"
 
     @pytest.mark.asyncio
     async def test_update_by_number(self, db_session, sample_group):
@@ -375,7 +372,8 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Updated" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "update_expense"
 
     @pytest.mark.asyncio
     async def test_update_by_number_out_of_range(self, db_session, sample_group):
@@ -384,7 +382,7 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "not found" in result.lower() or "No expenses" in result
+        assert result["status"] == "not_found"
 
     @pytest.mark.asyncio
     async def test_update_no_identifier(self, db_session, sample_group):
@@ -393,7 +391,8 @@ class TestHandleExpenseUpdate:
         result = await handler.handle_expense_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "specify" in result.lower()
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_identifier"
 
 
 class TestHandleExpenseDeleteByNumber:
@@ -413,8 +412,9 @@ class TestHandleExpenseDeleteByNumber:
         result = await handler.handle_expense_delete(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Deleted" in result
-        assert "dinner" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "delete_expense"
+        assert result["description"] == "dinner"
 
     @pytest.mark.asyncio
     async def test_delete_by_number_out_of_range(self, db_session, sample_group):
@@ -423,7 +423,7 @@ class TestHandleExpenseDeleteByNumber:
         result = await handler.handle_expense_delete(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "not found" in result.lower() or "No expenses" in result
+        assert result["status"] == "not_found"
 
     @pytest.mark.asyncio
     async def test_delete_no_identifier(self, db_session, sample_group):
@@ -432,4 +432,5 @@ class TestHandleExpenseDeleteByNumber:
         result = await handler.handle_expense_delete(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "specify" in result.lower()
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_identifier"

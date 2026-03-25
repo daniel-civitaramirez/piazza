@@ -26,8 +26,9 @@ class TestHandleReminderCancel:
         result = await handler.handle_reminder_cancel(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Cancelled" in result
-        assert "dentist" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "cancel_reminder"
+        assert "dentist" in result["message"]
 
     @pytest.mark.asyncio
     async def test_cancel_by_message_text(self, db_session, sample_group):
@@ -43,21 +44,24 @@ class TestHandleReminderCancel:
         result = await handler.handle_reminder_cancel(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Cancelled" in result
-        assert "dentist" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "cancel_reminder"
+        assert "dentist" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_cancel_no_match_returns_error(self, db_session, sample_group):
-        """No matching reminder returns error."""
+    async def test_cancel_no_match_returns_not_found(self, db_session, sample_group):
+        """No matching reminder returns not_found dict."""
         entities = Entities(description="nonexistent")
         result = await handler.handle_reminder_cancel(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "No active reminder" in result
+        assert result["status"] == "not_found"
+        assert result["entity"] == "reminder"
+        assert result["query"] == "nonexistent"
 
     @pytest.mark.asyncio
     async def test_cancel_ambiguous_returns_disambiguation(self, db_session, sample_group):
-        """Multiple matches returns disambiguation list."""
+        """Multiple matches returns ambiguous dict."""
         trigger1 = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
         trigger2 = datetime(2030, 6, 1, 12, 0, tzinfo=timezone.utc)
         await create_reminder(
@@ -74,18 +78,22 @@ class TestHandleReminderCancel:
         result = await handler.handle_reminder_cancel(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Multiple" in result
-        assert "team" in result
-        assert "client" in result
+        assert result["status"] == "ambiguous"
+        assert result["entity"] == "reminder"
+        assert len(result["matches"]) == 2
+        messages = [m["message"] for m in result["matches"]]
+        assert "meeting with team" in messages
+        assert "meeting with client" in messages
 
     @pytest.mark.asyncio
     async def test_cancel_missing_identifier_returns_error(self, db_session, sample_group):
-        """No number or description returns helpful error."""
+        """No number or description returns missing_identifier error."""
         entities = Entities()
         result = await handler.handle_reminder_cancel(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "specify" in result.lower()
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_identifier"
 
 
 class TestHandleReminderSnooze:
@@ -108,8 +116,9 @@ class TestHandleReminderSnooze:
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Snoozed" in result
-        assert "second reminder" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "snooze_reminder"
+        assert "second reminder" in result["message"]
 
     @pytest.mark.asyncio
     async def test_snooze_by_message_text(self, db_session, sample_group):
@@ -125,12 +134,13 @@ class TestHandleReminderSnooze:
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "Snoozed" in result
-        assert "dentist" in result
+        assert result["status"] == "ok"
+        assert result["action"] == "snooze_reminder"
+        assert "dentist" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_snooze_invalid_number_returns_error(self, db_session, sample_group):
-        """Out-of-range number returns error."""
+    async def test_snooze_invalid_number_returns_not_found(self, db_session, sample_group):
+        """Out-of-range number returns not_found dict."""
         trigger = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
         await create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
@@ -142,7 +152,10 @@ class TestHandleReminderSnooze:
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "not found" in result
+        assert result["status"] == "not_found"
+        assert result["entity"] == "reminder"
+        assert result["number"] == 5
+        assert result["total"] == 1
 
     @pytest.mark.asyncio
     async def test_snooze_missing_duration_returns_error(self, db_session, sample_group):
@@ -151,7 +164,8 @@ class TestHandleReminderSnooze:
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "duration" in result.lower()
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_duration"
 
     @pytest.mark.asyncio
     async def test_snooze_missing_identifier_returns_error(self, db_session, sample_group):
@@ -160,22 +174,26 @@ class TestHandleReminderSnooze:
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "specify" in result.lower()
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_identifier"
 
     @pytest.mark.asyncio
     async def test_snooze_no_active_reminders(self, db_session, sample_group):
-        """Snoozing when no active reminders exist."""
+        """Snoozing when no active reminders exist returns not_found."""
         entities = Entities(item_number=1, datetime_raw="1h")
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "No active" in result or "not found" in result
+        assert result["status"] == "not_found"
+        assert result["entity"] == "reminder"
 
     @pytest.mark.asyncio
     async def test_snooze_by_message_no_match(self, db_session, sample_group):
-        """Snooze by message text with no match returns error."""
+        """Snooze by message text with no match returns not_found."""
         entities = Entities(description="nonexistent", datetime_raw="1h")
         result = await handler.handle_reminder_snooze(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert "No active reminder" in result
+        assert result["status"] == "not_found"
+        assert result["entity"] == "reminder"
+        assert result["query"] == "nonexistent"

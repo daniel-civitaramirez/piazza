@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.db.repositories.stats import get_group_stats
+from piazza.tools.responses import Action, ok_response
 from piazza.tools.schemas import Entities
 
 
@@ -15,13 +16,16 @@ async def handle_status(
     group_id: uuid.UUID,
     sender_id: uuid.UUID,
     entities: Entities,
-) -> str:
+) -> dict:
     stats = await get_group_stats(session, group_id)
-    return (
-        f"*Group Status*\n\n"
-        f"{stats.expense_count} expenses logged ({stats.total_amount_display} total)\n"
-        f"{stats.unsettled_balance_count} unsettled balances\n"
-        f"{stats.active_reminder_count} active reminders\n"
-        f"{stats.itinerary_item_count} itinerary items\n"
-        f"{stats.note_count} saved notes"
+    return ok_response(
+        Action.GET_STATUS,
+        stats={
+            "expense_count": stats.expense_count,
+            "total_amount_cents": stats.total_amount_cents,
+            "unsettled_balance_count": stats.unsettled_balance_count,
+            "active_reminder_count": stats.active_reminder_count,
+            "itinerary_item_count": stats.itinerary_item_count,
+            "note_count": stats.note_count,
+        },
     )

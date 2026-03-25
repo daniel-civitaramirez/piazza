@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from piazza.core.exceptions import NotFoundError
+from piazza.db.models.note import Note
 from piazza.db.repositories import note as queries
 from piazza.tools.notes import service
 
@@ -15,9 +17,9 @@ class TestNoteSave:
             db_session, sample_group.group_id, sample_group.alice.id,
             content="BeachLife2026", tag="wifi password",
         )
-        assert "wifi password" in result
-        assert "BeachLife2026" in result
-        assert "Saved" in result
+        assert isinstance(result, Note)
+        assert result.content == "BeachLife2026"
+        assert result.tag == "wifi password"
 
     @pytest.mark.asyncio
     async def test_save_without_tag(self, db_session, sample_group):
@@ -25,8 +27,9 @@ class TestNoteSave:
             db_session, sample_group.group_id, sample_group.alice.id,
             content="The door code is 4321",
         )
-        assert "door code is 4321" in result
-        assert "Saved" in result
+        assert isinstance(result, Note)
+        assert result.content == "The door code is 4321"
+        assert result.tag is None
 
     @pytest.mark.asyncio
     async def test_save_duplicate_tag_allowed(self, db_session, sample_group):
@@ -38,7 +41,8 @@ class TestNoteSave:
             db_session, sample_group.group_id, sample_group.bob.id,
             content="NewPassword", tag="wifi",
         )
-        assert "Saved" in result
+        assert isinstance(result, Note)
+        assert result.content == "NewPassword"
 
         # Both notes should exist
         notes = await queries.get_notes(db_session, sample_group.group_id)
@@ -55,7 +59,8 @@ class TestNoteFind:
         await db_session.flush()
 
         result = await service.find_notes(db_session, sample_group.group_id, "wifi")
-        assert "BeachLife2026" in result
+        assert len(result) == 1
+        assert result[0].content == "BeachLife2026"
 
     @pytest.mark.asyncio
     async def test_find_by_content(self, db_session, sample_group):
@@ -66,12 +71,13 @@ class TestNoteFind:
         await db_session.flush()
 
         result = await service.find_notes(db_session, sample_group.group_id, "check-in")
-        assert "3pm" in result
+        assert len(result) == 1
+        assert "3pm" in result[0].content
 
     @pytest.mark.asyncio
     async def test_find_no_matches(self, db_session, sample_group):
         result = await service.find_notes(db_session, sample_group.group_id, "nonexistent")
-        assert "No matching notes" in result
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_find_case_insensitive(self, db_session, sample_group):
@@ -82,14 +88,15 @@ class TestNoteFind:
         await db_session.flush()
 
         result = await service.find_notes(db_session, sample_group.group_id, "booking ref")
-        assert "ABC123" in result
+        assert len(result) == 1
+        assert result[0].content == "ABC123"
 
 
 class TestNoteList:
     @pytest.mark.asyncio
     async def test_list_empty(self, db_session, sample_group):
         result = await service.list_notes(db_session, sample_group.group_id)
-        assert "No notes saved" in result
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_list_with_notes(self, db_session, sample_group):
@@ -104,10 +111,11 @@ class TestNoteList:
         await db_session.flush()
 
         result = await service.list_notes(db_session, sample_group.group_id)
-        assert "wifi password" in result
-        assert "booking ref" in result
-        assert "1." in result
-        assert "2." in result
+        assert len(result) == 2
+        assert all(isinstance(n, Note) for n in result)
+        tags = [n.tag for n in result]
+        assert "wifi password" in tags
+        assert "booking ref" in tags
 
 
 class TestNoteDelete:
@@ -120,18 +128,21 @@ class TestNoteDelete:
         await db_session.flush()
 
         result = await service.delete_note(db_session, sample_group.group_id, "wifi")
-        assert "Deleted" in result
+        assert isinstance(result, Note)
+        assert result.content == "BeachLife2026"
 
         notes = await queries.get_notes(db_session, sample_group.group_id)
         assert len(notes) == 0
 
     @pytest.mark.asyncio
     async def test_delete_no_match(self, db_session, sample_group):
-        result = await service.delete_note(db_session, sample_group.group_id, "nonexistent")
-        assert "No note matching" in result
+        with pytest.raises(NotFoundError) as exc_info:
+            await service.delete_note(db_session, sample_group.group_id, "nonexistent")
+        assert exc_info.value.entity == "note"
+        assert exc_info.value.query == "nonexistent"
 
     @pytest.mark.asyncio
-    async def test_delete_multiple_matches_disambiguation(self, db_session, sample_group):
+    async def test_delete_multiple_matches_returns_list(self, db_session, sample_group):
         await queries.create_note(
             db_session, sample_group.group_id, sample_group.alice.id,
             content="old wifi code", tag="wifi home",
@@ -143,10 +154,47 @@ class TestNoteDelete:
         await db_session.flush()
 
         result = await service.delete_note(db_session, sample_group.group_id, "wifi")
-        assert "Multiple notes match" in result
-        assert "wifi home" in result
-        assert "wifi office" in result
+        assert isinstance(result, list)
+        assert len(result) == 2
+        tags = [n.tag for n in result]
+        assert "wifi home" in tags
+        assert "wifi office" in tags
 
         # Both notes should still exist
         notes = await queries.get_notes(db_session, sample_group.group_id)
         assert len(notes) == 2
+
+
+class TestNoteDeleteByNumber:
+    @pytest.mark.asyncio
+    async def test_delete_by_number(self, db_session, sample_group):
+        await queries.create_note(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            content="BeachLife2026", tag="wifi password",
+        )
+        await db_session.flush()
+
+        result = await service.delete_note_by_number(db_session, sample_group.group_id, 1)
+        assert isinstance(result, Note)
+        assert result.content == "BeachLife2026"
+
+    @pytest.mark.asyncio
+    async def test_delete_by_number_out_of_range(self, db_session, sample_group):
+        with pytest.raises(NotFoundError) as exc_info:
+            await service.delete_note_by_number(db_session, sample_group.group_id, 99)
+        assert exc_info.value.entity == "note"
+        assert exc_info.value.number == 99
+        assert exc_info.value.total == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_by_number_zero(self, db_session, sample_group):
+        await queries.create_note(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            content="note1", tag="tag1",
+        )
+        await db_session.flush()
+
+        with pytest.raises(NotFoundError) as exc_info:
+            await service.delete_note_by_number(db_session, sample_group.group_id, 0)
+        assert exc_info.value.number == 0
+        assert exc_info.value.total == 1

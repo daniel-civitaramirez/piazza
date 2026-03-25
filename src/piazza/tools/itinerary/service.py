@@ -8,10 +8,10 @@ from datetime import datetime
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from piazza.core.exceptions import NotFoundError
 from piazza.db.models.itinerary import ItineraryItem
 from piazza.db.repositories import itinerary as itinerary_repo
 from piazza.db.repositories import note as note_repo
-from piazza.tools.itinerary import formatter
 
 logger = structlog.get_logger()
 
@@ -45,7 +45,7 @@ async def add_from_items(
     group_id: uuid.UUID,
     sender_id: uuid.UUID,
     raw_items: list[dict],
-) -> str:
+) -> list[ItineraryItem]:
     """Add structured itinerary items (already parsed by the agent LLM)."""
     items = []
     for raw in raw_items:
@@ -72,48 +72,51 @@ async def add_from_items(
         )
 
     await session.commit()
-    return formatter.format_item_confirmation(items)
+    return items
 
 
 async def list_itinerary(
     session: AsyncSession, group_id: uuid.UUID
-) -> str:
-    """Get and format the full itinerary."""
-    items = await itinerary_repo.get_items(session, group_id)
-    return formatter.format_full_itinerary(items)
+) -> list[ItineraryItem]:
+    """Get the full itinerary as a list of items."""
+    return await itinerary_repo.get_items(session, group_id)
 
 
 async def delete_item_by_number(
     session: AsyncSession, group_id: uuid.UUID, number: int
-) -> str:
-    """Delete the Nth itinerary item (1-indexed, same order as show_itinerary)."""
+) -> ItineraryItem:
+    """Delete the Nth itinerary item (1-indexed, same order as show_itinerary).
+
+    Raises NotFoundError if the number is out of range.
+    """
     items = await itinerary_repo.get_items(session, group_id)
     if number < 1 or number > len(items):
-        total = len(items)
-        if total == 0:
-            return "No itinerary items to remove."
-        return f"Item #{number} not found. You have {total} itinerary item(s)."
+        raise NotFoundError("itinerary_item", number=number, total=len(items))
 
     item = items[number - 1]
     await session.delete(item)
     await session.flush()
     await session.commit()
-    return f"Removed: *{item.title}*"
+    return item
 
 
 async def delete_item(
     session: AsyncSession, group_id: uuid.UUID, description: str
-) -> str:
-    """Delete an item by title match, handling ambiguity."""
+) -> ItineraryItem | list[ItineraryItem]:
+    """Delete an item by title match, handling ambiguity.
+
+    Returns a single ItineraryItem on exact/unique match, or a list for ambiguous.
+    Raises NotFoundError if no matches.
+    """
     matches = await itinerary_repo.find_items_by_title(session, group_id, description)
 
     if not matches:
-        return f"No itinerary item matching _{description}_ found."
+        raise NotFoundError("itinerary_item", query=description)
 
     if len(matches) == 1:
         await session.delete(matches[0])
         await session.flush()
         await session.commit()
-        return f"Removed: *{matches[0].title}*"
+        return matches[0]
 
-    return formatter.format_disambiguation(matches)
+    return matches

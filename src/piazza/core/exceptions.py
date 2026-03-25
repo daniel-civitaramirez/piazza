@@ -17,6 +17,24 @@ UNAPPROVED_GROUP_RESPONSE = (
 )
 
 
+class NotFoundError(PiazzaError):
+    """Item not found by number or search query."""
+
+    def __init__(
+        self,
+        entity: str,
+        *,
+        number: int | None = None,
+        total: int | None = None,
+        query: str | None = None,
+    ) -> None:
+        self.entity = entity
+        self.number = number
+        self.total = total
+        self.query = query
+        super().__init__(f"{entity} not found")
+
+
 class ExpenseError(PiazzaError):
     """Error in expense processing."""
 
