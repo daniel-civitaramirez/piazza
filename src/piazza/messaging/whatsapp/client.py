@@ -54,7 +54,6 @@ async def send_text(group_jid: str, text: str) -> str | None:
             resp.raise_for_status()
             logger.info(
                 "whatsapp_send_text",
-                group_jid=group_jid,
                 text_length=len(text),
                 attempt=attempt,
             )
@@ -68,7 +67,6 @@ async def send_text(group_jid: str, text: str) -> str | None:
             last_exc = exc
             logger.warning(
                 "whatsapp_send_text_attempt_failed",
-                group_jid=group_jid,
                 attempt=attempt,
                 max_retries=settings.wa_send_max_retries,
             )
@@ -77,7 +75,6 @@ async def send_text(group_jid: str, text: str) -> str | None:
 
     logger.error(
         "whatsapp_send_text_failed",
-        group_jid=group_jid,
         attempts=settings.wa_send_max_retries,
     )
     raise WhatsAppSendError(
@@ -95,7 +92,7 @@ async def send_typing(group_jid: str) -> None:
         resp = await client.post(url, json=payload, headers=_headers())
         resp.raise_for_status()
     except httpx.HTTPError:
-        logger.exception("whatsapp_send_typing_failed", group_jid=group_jid)
+        logger.exception("whatsapp_send_typing_failed")
 
 
 async def close() -> None:

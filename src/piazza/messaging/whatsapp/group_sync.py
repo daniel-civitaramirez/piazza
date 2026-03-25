@@ -72,8 +72,7 @@ async def handle_group_upsert(raw: dict) -> None:
             await session.commit()
             logger.info(
                 "group_upsert_synced",
-                group_jid=data.id,
-                subject=data.subject,
+                group_id=str(group.id),
                 members_synced=synced,
             )
 
@@ -89,7 +88,7 @@ async def handle_group_upsert(raw: dict) -> None:
                     ],
                 )
     except Exception:
-        logger.exception("group_upsert_error", group_jid=data.id)
+        logger.exception("group_upsert_error")
 
 
 async def handle_group_participants_update(raw: dict) -> None:
@@ -136,23 +135,22 @@ async def handle_group_participants_update(raw: dict) -> None:
                 # promote / demote — log only
                 logger.info(
                     "group_participants_action",
-                    group_jid=data.group_jid,
+                    group_id=str(group.id),
                     action=data.action,
-                    participants=data.participants,
+                    count=len(data.participants),
                 )
                 return
 
             await session.commit()
             logger.info(
                 "group_participants_updated",
-                group_jid=data.group_jid,
+                group_id=str(group.id),
                 action=data.action,
                 count=len(data.participants),
             )
     except Exception:
         logger.exception(
             "group_participants_update_error",
-            group_jid=data.group_jid,
             action=data.action,
         )
 
@@ -179,8 +177,4 @@ async def learn_display_name(
             await session.commit()
     except Exception:
         # Fire-and-forget — must never block the webhook
-        logger.exception(
-            "learn_display_name_error",
-            group_jid=group_jid,
-            sender_jid=sender_jid,
-        )
+        logger.exception("learn_display_name_error")

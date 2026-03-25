@@ -66,7 +66,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
         if lock:
             acquired = await lock.acquire(blocking_timeout=settings.group_lock_wait)
             if not acquired:
-                logger.warning("group_lock_timeout", group_jid=message.group_jid)
+                logger.warning("group_lock_timeout")
                 response = GENERIC_ERROR_RESPONSE
             else:
                 async with AsyncSessionFactory() as session:
@@ -75,16 +75,14 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
             async with AsyncSessionFactory() as session:
                 response = await process_message(message, session, redis)
     except Exception:
-        logger.exception(
-            "process_message_job_error", group_jid=message.group_jid
-        )
+        logger.exception("process_message_job_error")
         response = GENERIC_ERROR_RESPONSE
     finally:
         try:
             if lock and lock.owned():
                 await lock.release()
         except Exception:
-            logger.warning("group_lock_release_failed", group_jid=message.group_jid)
+            logger.warning("group_lock_release_failed")
 
     # Attempt delivery; if send_text raises after retries, log it
     wa_message_id: str | None = None
@@ -93,7 +91,6 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     except WhatsAppSendError:
         logger.error(
             "message_delivery_failed",
-            group_jid=message.group_jid,
             response_length=len(response),
         )
 
@@ -122,7 +119,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
             )
             await session.commit()
     except Exception:
-        logger.exception("message_log_error", group_jid=message.group_jid)
+        logger.exception("message_log_error")
 
     return response
 
@@ -146,7 +143,7 @@ async def fire_reminders_job(ctx: dict) -> int:
             await client.send_text(group_jid, text)
             sent += 1
         except Exception:
-            logger.exception("reminder_send_failed", group_jid=group_jid)
+            logger.exception("reminder_send_failed")
 
     return sent
 

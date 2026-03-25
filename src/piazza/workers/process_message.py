@@ -130,7 +130,7 @@ async def process_message(
         if group.approval_status != "approved":
             logger.info(
                 "unapproved_group_rejected",
-                group_jid=message.group_jid,
+                group_id=str(group.id),
                 status=group.approval_status,
             )
             return UNAPPROVED_GROUP_RESPONSE
@@ -175,11 +175,7 @@ async def process_message(
         response = await _run_agent(context, redis)
 
     except Exception:
-        logger.exception(
-            "pipeline_error",
-            group_jid=message.group_jid,
-            sender_jid=message.sender_jid,
-        )
+        logger.exception("pipeline_error")
         return GENERIC_ERROR_RESPONSE
 
     processing_ms = int((time.monotonic() - start_time) * 1000)
