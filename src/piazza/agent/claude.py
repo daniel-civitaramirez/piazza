@@ -114,6 +114,14 @@ class ClaudeAgent(BaseAgent):
                 system=system,
                 messages=messages,
             )
+        except anthropic.APITimeoutError as exc:
+            logger.warning("claude_agent_followup_timeout")
+            raise AgentTimeoutError("Claude API timed out on followup") from exc
+        except anthropic.APIConnectionError as exc:
+            logger.warning("claude_agent_followup_unavailable")
+            raise AgentUnavailableError(
+                "Cannot connect to Claude API on followup"
+            ) from exc
         except anthropic.APIError as exc:
             logger.warning("claude_agent_followup_error", error=str(exc))
             raise AgentUnavailableError(

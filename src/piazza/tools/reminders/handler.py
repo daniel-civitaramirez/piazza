@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.core.exceptions import NotFoundError, ReminderError
-from piazza.db.models.group import Group
 from piazza.db.models.reminder import Reminder
+from piazza.db.repositories.group import get_group
 from piazza.tools.reminders import service
 from piazza.tools.responses import (
     Action,
@@ -28,8 +27,7 @@ from piazza.tools.schemas import Entities
 
 
 async def _get_group_tz(session: AsyncSession, group_id: uuid.UUID) -> str:
-    result = await session.execute(select(Group).where(Group.id == group_id))
-    group = result.scalar_one_or_none()
+    group = await get_group(session, group_id)
     return group.timezone if group else "UTC"
 
 
@@ -53,7 +51,7 @@ def _not_found_from_exc(exc: NotFoundError) -> dict:
     )
 
 
-def _ambiguous_dict(matches: list[Reminder]) -> dict:
+def _ambiguous_response(matches: list[Reminder]) -> dict:
     return ambiguous_response(
         Entity.REMINDER,
         [_reminder_to_dict(r, i) for i, r in enumerate(matches, 1)],
@@ -122,7 +120,7 @@ async def handle_reminder_cancel(
                 session, group_id, entities.description
             )
             if isinstance(result, list):
-                return _ambiguous_dict(result)
+                return _ambiguous_response(result)
             return ok_response(
                 Action.CANCEL_REMINDER,
                 message=result.message,
@@ -158,7 +156,7 @@ async def handle_reminder_snooze(
                 session, group_id, entities.description, duration
             )
             if isinstance(result, list):
-                return _ambiguous_dict(result)
+                return _ambiguous_response(result)
             return ok_response(
                 Action.SNOOZE_REMINDER,
                 message=result.message,

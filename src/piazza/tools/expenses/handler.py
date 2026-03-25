@@ -36,14 +36,14 @@ def _group_member_names(members: list) -> list[str]:
 
 def _not_found_from_exc(exc: NotFoundError) -> dict:
     return not_found_response(
-        Entity.EXPENSE,
+        exc.entity,
         number=exc.number,
         total=exc.total,
         query=exc.query,
     )
 
 
-def _resolve_ambiguous(matches: list[Expense]) -> dict:
+def _ambiguous_response(matches: list[Expense]) -> dict:
     return ambiguous_response(
         Entity.EXPENSE,
         [service.expense_to_dict(exp, i) for i, exp in enumerate(matches[:5], 1)],
@@ -241,7 +241,7 @@ async def handle_expense_delete(
                 session, group_id, entities.description
             )
             if isinstance(result, list):
-                return _resolve_ambiguous(result)
+                return _ambiguous_response(result)
             expense = result
         else:
             return error_response(Reason.MISSING_IDENTIFIER, entity=Entity.EXPENSE)
@@ -272,7 +272,7 @@ async def handle_expense_update(
                 session, group_id, entities.description
             )
             if isinstance(result, list):
-                return _resolve_ambiguous(result)
+                return _ambiguous_response(result)
             expense = result
         else:
             return error_response(Reason.MISSING_IDENTIFIER, entity=Entity.EXPENSE)
