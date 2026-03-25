@@ -81,7 +81,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
         response = GENERIC_ERROR_RESPONSE
     finally:
         try:
-            if lock and lock.owned():
+            if lock and await lock.owned():
                 await lock.release()
         except Exception:
             logger.warning("group_lock_release_failed", group_jid=message.group_jid)
