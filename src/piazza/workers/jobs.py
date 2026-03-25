@@ -57,7 +57,14 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     # Small random delay to feel more human (1-3 seconds)
     await asyncio.sleep(random.uniform(settings.human_delay_min, settings.human_delay_max))
 
+    # Serialize processing per group to prevent race conditions
+    lock = (
+        redis.lock(f"lock:group:{message.group_jid}", timeout=settings.group_lock_timeout)
+        if redis else None
+    )
     try:
+        if lock:
+            await lock.acquire()
         async with AsyncSessionFactory() as session:
             response = await process_message(message, session, redis)
     except Exception:
@@ -65,6 +72,9 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
             "process_message_job_error", group_jid=message.group_jid
         )
         response = GENERIC_ERROR_RESPONSE
+    finally:
+        if lock and lock.owned():
+            await lock.release()
 
     # Attempt delivery; if send_text raises after retries, log it
     wa_message_id: str | None = None
