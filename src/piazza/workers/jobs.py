@@ -64,17 +64,27 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     )
     try:
         if lock:
-            await lock.acquire()
-        async with AsyncSessionFactory() as session:
-            response = await process_message(message, session, redis)
+            acquired = await lock.acquire(blocking_timeout=settings.group_lock_wait)
+            if not acquired:
+                logger.warning("group_lock_timeout", group_jid=message.group_jid)
+                response = GENERIC_ERROR_RESPONSE
+            else:
+                async with AsyncSessionFactory() as session:
+                    response = await process_message(message, session, redis)
+        else:
+            async with AsyncSessionFactory() as session:
+                response = await process_message(message, session, redis)
     except Exception:
         logger.exception(
             "process_message_job_error", group_jid=message.group_jid
         )
         response = GENERIC_ERROR_RESPONSE
     finally:
-        if lock and lock.owned():
-            await lock.release()
+        try:
+            if lock and lock.owned():
+                await lock.release()
+        except Exception:
+            logger.warning("group_lock_release_failed", group_jid=message.group_jid)
 
     # Attempt delivery; if send_text raises after retries, log it
     wa_message_id: str | None = None

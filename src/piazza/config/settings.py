@@ -58,7 +58,8 @@ class Settings(BaseSettings):
     # Worker
     worker_max_jobs: int = 10
     worker_job_timeout: int = 30
-    group_lock_timeout: int = 30
+    group_lock_timeout: int = 45
+    group_lock_wait: int = 10
     human_delay_min: float = 1.0
     human_delay_max: float = 3.0
     reminder_cron_seconds: str = "0,30"
