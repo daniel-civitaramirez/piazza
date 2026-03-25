@@ -57,3 +57,8 @@ disallow_untyped_defs = false
 asyncio_mode = "auto"
 testpaths = ["src"]
 python_files = ["*_test.py"]
+
+[dependency-groups]
+dev = [
+    "lupa>=2.6",
+]
