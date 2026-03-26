@@ -41,3 +41,6 @@ class Group(TimestampMixin, Base):
     notes: Mapped[list["Note"]] = relationship(  # noqa: F821
         back_populates="group", cascade="all, delete-orphan"
     )
+    checklist_items: Mapped[list["ChecklistItem"]] = relationship(  # noqa: F821
+        back_populates="group", cascade="all, delete-orphan"
+    )

@@ -39,6 +39,7 @@ CAPABILITIES:
 - *Expenses*: add expenses, update expenses, split bills, check balances, settle up, list/delete expenses.
 - *Reminders*: set one-time or recurring reminders, list, cancel, snooze.
 - *Notes*: save shared info (wifi passwords, booking refs), search, list, delete.
+- *Checklists*: add items to shared lists (shopping, packing, etc.), check/uncheck items, list, delete.
 - *Itinerary*: add flights/hotels/restaurants/activities, show/remove items.
 - *Other*: set group timezone, show group status.
 

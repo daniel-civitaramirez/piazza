@@ -27,5 +27,7 @@ async def handle_status(
             "active_reminder_count": stats.active_reminder_count,
             "itinerary_item_count": stats.itinerary_item_count,
             "note_count": stats.note_count,
+            "checklist_item_count": stats.checklist_item_count,
+            "checklist_done_count": stats.checklist_done_count,
         },
     )

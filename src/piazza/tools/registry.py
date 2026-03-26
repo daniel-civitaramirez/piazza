@@ -15,6 +15,13 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.core.exceptions import PiazzaError
+from piazza.tools.checklist.handler import (
+    handle_item_add,
+    handle_item_check,
+    handle_item_delete,
+    handle_item_list,
+    handle_item_uncheck,
+)
 from piazza.tools.expenses.handler import (
     handle_expense_add,
     handle_expense_balance,
@@ -387,6 +394,98 @@ AGENT_TOOLS: list[dict] = [
         },
     },
     {
+        "name": "add_item",
+        "description": "Add an item to a shared checklist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "The item to add",
+                },
+                "list_name": {
+                    "type": "string",
+                    "description": (
+                        "Name of the list (e.g. 'shopping', 'packing')."
+                        " Defaults to 'default' if omitted."
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    },
+    {
+        "name": "list_items",
+        "description": "Show items on a shared checklist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "list_name": {
+                    "type": "string",
+                    "description": "Filter by list name. Omit to show all lists.",
+                },
+                "show_done": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true when user asks for completed/checked-off items,"
+                        " the full list, or 'everything'. Default false (pending only)."
+                    ),
+                },
+            },
+        },
+    },
+    {
+        "name": "check_item",
+        "description": "Mark a checklist item as done.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item_number": {
+                    "type": "integer",
+                    "description": "Position number from list_items (e.g. 2 for #2)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Text to match against the item content",
+                },
+            },
+        },
+    },
+    {
+        "name": "uncheck_item",
+        "description": "Mark a checklist item as not done.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item_number": {
+                    "type": "integer",
+                    "description": "Position number from list_items (e.g. 2 for #2)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Text to match against the item content",
+                },
+            },
+        },
+    },
+    {
+        "name": "delete_item",
+        "description": "Remove an item from a shared checklist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item_number": {
+                    "type": "integer",
+                    "description": "Position number from list_items (e.g. 2 for #2)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Text to match against the item content",
+                },
+            },
+        },
+    },
+    {
         "name": "set_timezone",
         "description": "Set the group's timezone for reminders.",
         "input_schema": {
@@ -430,6 +529,11 @@ TOOL_REGISTRY: dict[str, HandlerFunc] = {
     "find_note": handle_note_find,
     "list_notes": handle_note_list,
     "delete_note": handle_note_delete,
+    "add_item": handle_item_add,
+    "list_items": handle_item_list,
+    "check_item": handle_item_check,
+    "uncheck_item": handle_item_uncheck,
+    "delete_item": handle_item_delete,
     "set_timezone": handle_set_timezone,
     "get_status": handle_status,
 }
