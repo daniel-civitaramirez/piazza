@@ -41,7 +41,7 @@ You need a PostgreSQL database. Supabase gives you a managed one with a free tie
 2. Find the **Connection string** section → select **URI**
 3. You need the **Transaction mode** (port `6543`) connection string via Supavisor, not the direct one (port `5432`)
 4. It'll look like: `postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres`
-5. For your app, prefix it for asyncpg: `postgresql+asyncpg://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require`
+5. For your app, prefix it for asyncpg: `postgresql+asyncpg://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?ssl=require`
 
 **Save this string.** It goes into your `.env` as `SUPABASE_DB_URL`.
 
@@ -54,7 +54,7 @@ From your local machine (with your venv active):
 python -c "
 import asyncio, asyncpg
 async def test():
-    conn = await asyncpg.connect('postgresql://postgres.[ref]:[pw]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require')
+    conn = await asyncpg.connect('postgresql://postgres.[ref]:[pw]@aws-0-[region].pooler.supabase.com:6543/postgres?ssl=require')
     print(await conn.fetchval('SELECT 1'))
     await conn.close()
 asyncio.run(test())
@@ -241,6 +241,7 @@ ADMIN_JID=
 
 # === Evolution API ===
 EVO_API_KEY=<generate a random string: openssl rand -hex 32>
+EVO_DB_PASSWORD=<generate: openssl rand -hex 16>
 EVO_INSTANCE_NAME=piazza-main
 BOT_JID=<you'll fill this AFTER WhatsApp linking — leave blank for now>
 
@@ -248,7 +249,7 @@ BOT_JID=<you'll fill this AFTER WhatsApp linking — leave blank for now>
 DOMAIN=piazza.yourdomain.com
 
 # === Database ===
-SUPABASE_DB_URL=postgresql+asyncpg://postgres.[ref]:[pw]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require
+SUPABASE_DB_URL=postgresql+asyncpg://postgres.[ref]:[pw]@aws-0-[region].pooler.supabase.com:6543/postgres?ssl=require
 
 # === Redis ===
 REDIS_PASSWORD=<generate: openssl rand -hex 32>
@@ -270,24 +271,11 @@ SENTRY_DSN=
 OPENEXCHANGERATES_KEY=<sign up at openexchangerates.org — free tier is 1000 req/mo>
 ```
 
-> **Note:** `EVO_API_URL`, `OLLAMA_URL`, `REDIS_URL`, and `INJECTION_PATTERNS_PATH` are overridden by `docker-compose.prod.yml` to use container hostnames. You don't need to set them in `.env` for production.
+> **Note:** `EVO_API_URL`, `OLLAMA_URL`, `REDIS_URL`, and `INJECTION_PATTERNS_PATH` are overridden by `docker-compose.prod.yml` to use container hostnames. You don't need to set them in `.env` for production. Evolution API configuration (database, webhooks, caching) is fully managed by the compose `environment:` block — no separate `evolution.env` file is needed.
 
 **Generate all secrets now.** Don't use placeholder values.
 
-### 6.3 Configure Evolution API
-
-The Evolution API container uses its own env file (it ignores Docker environment variables due to an internal `.env` override). Create it from the example:
-
-```bash
-cp config/evolution.env.example config/evolution.env
-nano config/evolution.env
-```
-
-Fill in:
-- `AUTHENTICATION_API_KEY` — same as `EVO_API_KEY` in your `.env`
-- `DATABASE_CONNECTION_URI` — same as `SUPABASE_DB_URL` but with `postgresql://` prefix (no `+asyncpg`)
-
-### 6.4 Deploy injection patterns
+### 6.3 Deploy injection patterns
 
 This file must NOT come from git. Copy it from your local machine:
 
@@ -303,7 +291,7 @@ ls -la /opt/piazza/config/injection_patterns.json
 cat /opt/piazza/config/injection_patterns.json | python3 -m json.tool  # validate JSON
 ```
 
-### 6.5 Create the Caddyfile
+### 6.4 Create the Caddyfile
 
 ```bash
 nano /opt/piazza/Caddyfile
@@ -316,15 +304,15 @@ piazza.yourdomain.com {
 }
 ```
 
-### 6.6 Verify your Dockerfile and docker-compose.prod.yml exist
+### 6.5 Verify your Dockerfile and docker-compose.prod.yml exist
 
 These files exist in the repo. Double-check:
 
-- `docker-compose.prod.yml` has all 6 services: `evolution-api`, `ollama`, `app`, `worker`, `redis`, `caddy`
+- `docker-compose.prod.yml` has all 7 services: `redis`, `ollama`, `evolution-postgres`, `evolution-api`, `app`, `worker`, `caddy`
 - `Dockerfile` copies `pyproject.toml`, `uv.lock`, `alembic/`, `src/`
 - The `app` and `worker` containers both mount `./config/injection_patterns.json:/app/config/injection_patterns.json:ro`
 
-### 6.7 Build and start everything
+### 6.6 Build and start everything
 
 ```bash
 cd /opt/piazza
@@ -340,7 +328,7 @@ docker compose -f docker-compose.prod.yml logs -f
 # Ctrl+C after ~30 seconds if it looks stable
 ```
 
-### 6.8 Pull the Ollama model
+### 6.7 Pull the Ollama model
 
 This downloads ~2.7 GB. Takes 1-5 minutes depending on your server's bandwidth.
 
@@ -355,7 +343,7 @@ docker compose -f docker-compose.prod.yml exec ollama ollama list
 # Should show qwen3.5:4b (or your custom OLLAMA_MODEL)
 ```
 
-### 6.9 Run database migrations
+### 6.8 Run database migrations
 
 `ENCRYPTION_KEY` must be set in `.env` before running migrations — migration 009 encrypts existing plaintext data.
 
@@ -365,7 +353,7 @@ docker compose -f docker-compose.prod.yml exec app uv run alembic upgrade head
 
 Verify in Supabase dashboard → Table Editor that all tables exist.
 
-### 6.10 Check health
+### 6.9 Check health
 
 ```bash
 curl https://piazza.yourdomain.com/health
@@ -380,7 +368,7 @@ curl http://localhost:8000/health
 docker compose -f docker-compose.prod.yml exec app curl http://localhost:8000/health
 ```
 
-### 6.11 Check RAM
+### 6.10 Check RAM
 
 ```bash
 docker stats --no-stream
@@ -588,7 +576,7 @@ Go to Supabase dashboard → Table Editor and verify:
 | "Ollama connection error" in logs | Ollama container not ready or OOM-killed | `docker compose logs ollama`. Run `docker stats` to check RAM. |
 | LLM agent always returns UNKNOWN | Prompt issue or model not loaded | Test Ollama directly: `docker compose exec ollama ollama run qwen3.5:4b "hello"` |
 | Expense @mentions not resolving members | Display name mismatch | Check how `pushName` maps to `display_name` in your `members` table. WhatsApp names are set by users and can change. |
-| Supabase connection timeout | Wrong port or SSL | Ensure port 6543 (not 5432) and `sslmode=require` |
+| Supabase connection timeout | Wrong port or SSL | Ensure port 6543 (not 5432) and `?ssl=require` (not `sslmode`) |
 | Caddy not issuing TLS cert | DNS not propagated yet | Run `dig piazza.yourdomain.com` — does it return your VPS IP? Wait and retry. |
 | App crashes on startup with `ENCRYPTION_KEY` error | Key missing or wrong length | Generate a 32-byte base64 key: `python3 -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())"` |
 | Evolution API shows "disconnected" | Phone logged out, or session expired | Re-scan QR code via the manager (SSH tunnel to port 8080) |
