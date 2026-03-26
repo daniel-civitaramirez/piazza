@@ -2,6 +2,11 @@
 
 from pydantic_settings import BaseSettings
 
+# Approval status constants
+APPROVAL_PENDING = "pending"
+APPROVAL_APPROVED = "approved"
+APPROVAL_REJECTED = "rejected"
+
 
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
@@ -42,8 +47,11 @@ class Settings(BaseSettings):
     circuit_breaker_window: int = 120
     circuit_breaker_cooldown: int = 600
 
+    # Rate limiting
+    group_rate_limit_per_minute: int = 5
+
     # Input validation
-    max_message_length: int = 500
+    max_message_length: int = 2000
     default_currency: str = "EUR"
 
     # WhatsApp client
@@ -53,7 +61,7 @@ class Settings(BaseSettings):
     health_check_timeout: float = 5.0
 
     # Agent
-    conversation_context_limit: int = 10
+    conversation_context_limit: int = 20
     message_log_retention_multiplier: int = 2
 
     # Worker

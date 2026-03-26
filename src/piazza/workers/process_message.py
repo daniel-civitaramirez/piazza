@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from piazza.agent import get_claude_agent, get_opensource_agent
 from piazza.agent.base import AgentTimeoutError, AgentUnavailableError
 from piazza.agent.context import AgentContext
-from piazza.config.settings import settings
+from piazza.config.settings import APPROVAL_APPROVED, settings
 from piazza.core.encryption import hash_phone
 from piazza.core.exceptions import (
     FLAGGED_RESPONSE,
@@ -114,7 +114,7 @@ async def process_message(
         # 1. Setup
         group, _ = await get_or_create_group(session, message.group_jid)
 
-        if group.approval_status != "approved":
+        if group.approval_status != APPROVAL_APPROVED:
             logger.info(
                 "unapproved_group_rejected",
                 group_id=str(group.id),

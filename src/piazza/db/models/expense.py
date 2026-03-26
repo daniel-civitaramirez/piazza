@@ -27,7 +27,7 @@ class Expense(Base):
         ForeignKey("members.id"), nullable=False
     )
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    currency: Mapped[str] = mapped_column(Text, default="EUR")
+    currency: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(

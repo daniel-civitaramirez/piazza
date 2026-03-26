@@ -17,7 +17,7 @@ from __future__ import annotations
 import structlog
 
 from piazza.admin.notify import notify_admin_new_group
-from piazza.config.settings import settings
+from piazza.config.settings import APPROVAL_PENDING, APPROVAL_REJECTED, settings
 from piazza.core.encryption import encrypt
 from piazza.db.engine import AsyncSessionFactory
 from piazza.db.repositories.group import get_or_create_group
@@ -77,7 +77,7 @@ async def handle_group_upsert(raw: dict) -> None:
             )
 
             # Notify admin of new pending group (after commit)
-            if was_created and group.approval_status == "pending":
+            if was_created and group.approval_status == APPROVAL_PENDING:
                 await notify_admin_new_group(
                     group_jid=data.id,
                     subject=data.subject,
@@ -108,7 +108,7 @@ async def handle_group_participants_update(raw: dict) -> None:
         async with AsyncSessionFactory() as session:
             group, _ = await get_or_create_group(session, data.group_jid)
 
-            if group.approval_status == "rejected":
+            if group.approval_status == APPROVAL_REJECTED:
                 return
 
             # Build a JID -> pushName mapping from participantsData (if available)
@@ -168,7 +168,7 @@ async def learn_display_name(
         async with AsyncSessionFactory() as session:
             group, _ = await get_or_create_group(session, group_jid)
 
-            if group.approval_status == "rejected":
+            if group.approval_status == APPROVAL_REJECTED:
                 return
 
             await get_or_create_member_by_jid(

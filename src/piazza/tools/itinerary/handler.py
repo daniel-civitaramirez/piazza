@@ -89,7 +89,7 @@ async def handle_itinerary_remove(
         if isinstance(result, list):
             return ambiguous_response(
                 Entity.ITINERARY_ITEM,
-                [_item_to_dict(item) for item in result],
+                [_item_to_dict(item) for item in result[:5]],
                 query=entities.description,
             )
         return ok_response(Action.REMOVE_ITINERARY, item=_item_to_dict(result))

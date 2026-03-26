@@ -31,6 +31,7 @@ docker compose -f docker-compose.prod.yml up -d  # full stack with evolution-api
 ```
 WhatsApp → Evolution API → /webhook (HMAC verify) → parse_webhook()
   → arq queue (Redis) → process_message_job
+  → per-group rate limit (Redis) → per-group lock (Redis)
   → L1 regex sanitizer → L2 ML guard (llm-guard)
   → _run_agent(): OpenSourceAgent (Ollama) → ClaudeAgent (fallback)
   → tool execution → WhatsApp response
@@ -103,6 +104,10 @@ All user-generated content is encrypted at the application level before storage 
 **Key helpers** in `core/encryption.py`: `encrypt`, `decrypt` (idempotent — safe for SQLAlchemy identity map reuse), `encrypt_nullable`, `decrypt_nullable`, `set_decrypted` (sets value without marking dirty in SQLAlchemy), `validate_key`.
 
 **Message log retention**: After each message, entries beyond `conversation_context_limit * message_log_retention_multiplier` (default 10 * 2 = 20) are pruned per group. Configurable in settings.
+
+### Rate Limiting
+
+Per-group rate limiting via Redis sorted set in `process_message_job`. Default: `group_rate_limit_per_minute = 5`. Checked before the per-group lock — rate-limited messages return a static response without calling the LLM, so no cost is incurred. Configurable in settings.
 
 ### Security Pipeline
 

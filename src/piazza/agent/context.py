@@ -37,21 +37,21 @@ def build_user_content(context: AgentContext) -> str:
 
     if context.recent_messages:
         lines = []
-        for msg in context.recent_messages[-10:]:
+        for msg in context.recent_messages:
             if msg.role == "user" and msg.member:
                 name = msg.member.display_name
             elif msg.role == "assistant":
                 name = "Piazza"
             else:
                 name = "Unknown"
-            lines.append(f"[{name}]: {msg.content[:200]}")
+            lines.append(f"[{name}]: {msg.content}")
         parts.append(
             "<recent_context>\n" + "\n".join(lines) + "\n</recent_context>"
         )
 
     if context.reply_context:
         parts.append(
-            f"<replying_to>\n{context.reply_context.content[:300]}\n</replying_to>"
+            f"<replying_to>\n{context.reply_context.content}\n</replying_to>"
         )
 
     parts.append(f"<user_message>{context.text}</user_message>")

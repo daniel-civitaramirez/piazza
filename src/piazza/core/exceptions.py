@@ -15,6 +15,10 @@ UNAPPROVED_GROUP_RESPONSE = (
     "This group hasn't been approved yet. "
     "The admin has been notified and will review it shortly."
 )
+RATE_LIMITED_RESPONSE = (
+    "This group is sending too many requests. "
+    "Please wait a moment and try again."
+)
 
 
 class NotFoundError(PiazzaError):

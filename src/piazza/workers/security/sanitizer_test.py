@@ -35,7 +35,7 @@ class TestUnicodeNormalization:
 class TestTruncation:
     def test_long_input_truncated(self):
         """Input longer than MAX_MESSAGE_LENGTH is truncated."""
-        text = "a" * 600
+        text = "a" * 3000
         sanitized, _ = sanitize_input(text)
         assert len(sanitized) == settings.max_message_length
 

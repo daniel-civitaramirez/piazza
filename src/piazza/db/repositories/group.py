@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from piazza.config.settings import settings
+from piazza.config.settings import APPROVAL_APPROVED, APPROVAL_PENDING, settings
 from piazza.db.models.group import Group
 
 
@@ -32,7 +32,7 @@ async def get_or_create_group(
     if group is not None:
         return group, False
 
-    approval = "approved" if not settings.admin_jid else "pending"
+    approval = APPROVAL_APPROVED if not settings.admin_jid else APPROVAL_PENDING
     group = Group(wa_jid=group_jid, approval_status=approval)
     session.add(group)
     await session.flush()

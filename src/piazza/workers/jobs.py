@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 
 import structlog
 from arq import cron
 from arq.connections import RedisSettings
 
 from piazza.config.settings import settings
-from piazza.core.exceptions import GENERIC_ERROR_RESPONSE, WhatsAppSendError
+from piazza.core.exceptions import GENERIC_ERROR_RESPONSE, RATE_LIMITED_RESPONSE, WhatsAppSendError
 
 logger = structlog.get_logger()
 
@@ -56,6 +57,24 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
 
     # Small random delay to feel more human (1-3 seconds)
     await asyncio.sleep(random.uniform(settings.human_delay_min, settings.human_delay_max))
+
+    # Per-group rate limiting
+    if redis and settings.group_rate_limit_per_minute > 0:
+        rate_key = f"rate:group:{message.group_jid}"
+        now = time.time()
+        pipe = redis.pipeline()
+        pipe.zadd(rate_key, {str(now): now})
+        pipe.zremrangebyscore(rate_key, "-inf", now - 60)
+        pipe.zcard(rate_key)
+        pipe.expire(rate_key, 60)
+        results = await pipe.execute()
+        if results[2] > settings.group_rate_limit_per_minute:
+            logger.warning("group_rate_limited", count=results[2])
+            try:
+                await client.send_text(message.group_jid, RATE_LIMITED_RESPONSE)
+            except WhatsAppSendError:
+                pass
+            return RATE_LIMITED_RESPONSE
 
     # Serialize processing per group to prevent race conditions
     lock = (
