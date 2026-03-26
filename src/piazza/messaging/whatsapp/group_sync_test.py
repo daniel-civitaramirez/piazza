@@ -8,6 +8,8 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from piazza.conftest import TEST_ENCRYPTION_KEY
+from piazza.core.encryption import decrypt
 from piazza.db.models.group import Group
 from piazza.db.models.member import Member
 from piazza.messaging.whatsapp.group_sync import (
@@ -107,7 +109,7 @@ class TestHandleGroupParticipantsUpdate:
         await handle_group_participants_update(raw)
 
         members = (await db_session.execute(select(Member))).scalars().all()
-        names = {m.display_name for m in members}
+        names = {decrypt(m.display_name, TEST_ENCRYPTION_KEY) for m in members}
         assert "Diana" in names
 
     @pytest.mark.asyncio
@@ -163,7 +165,7 @@ class TestLearnDisplayName:
             "120363001@g.us", "5511111111111@s.whatsapp.net", "Alice Updated"
         )
         await db_session.refresh(sample_group.alice)
-        assert sample_group.alice.display_name == "Alice Updated"
+        assert decrypt(sample_group.alice.display_name, TEST_ENCRYPTION_KEY) == "Alice Updated"
 
     @pytest.mark.asyncio
     async def test_creates_member_if_new(self, db_session, sample_group, patch_session):
@@ -171,5 +173,5 @@ class TestLearnDisplayName:
             "120363001@g.us", "5599999999999@s.whatsapp.net", "NewPerson"
         )
         members = (await db_session.execute(select(Member))).scalars().all()
-        names = {m.display_name for m in members}
+        names = {decrypt(m.display_name, TEST_ENCRYPTION_KEY) for m in members}
         assert "NewPerson" in names

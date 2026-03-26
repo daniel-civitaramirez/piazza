@@ -7,8 +7,15 @@ from datetime import datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from piazza.config.settings import settings
+from piazza.core.encryption import decrypt, encrypt, set_decrypted
 from piazza.db.models.reminder import Reminder
+
+
+def _key() -> bytes:
+    return settings.encryption_key_bytes
 
 
 async def create_reminder(
@@ -19,15 +26,17 @@ async def create_reminder(
     trigger_at: datetime,
 ) -> Reminder:
     """Create a new reminder."""
+    key = _key()
     reminder = Reminder(
         group_id=group_id,
         created_by=created_by,
-        message=message,
+        message=encrypt(message, key),  # type: ignore[assignment]
         trigger_at=trigger_at,
         status="active",
     )
     session.add(reminder)
     await session.flush()
+    set_decrypted(reminder, "message", message)
     return reminder
 
 
@@ -40,7 +49,11 @@ async def get_active_reminders(
         .where(Reminder.group_id == group_id, Reminder.status == "active")
         .order_by(Reminder.trigger_at)
     )
-    return list(result.scalars().all())
+    reminders = list(result.scalars().all())
+    key = _key()
+    for r in reminders:
+        set_decrypted(r, "message", decrypt(r.message, key))
+    return reminders
 
 
 async def get_due_reminders(
@@ -48,27 +61,26 @@ async def get_due_reminders(
 ) -> list[Reminder]:
     """Get all reminders that are due (trigger_at <= now and active)."""
     result = await session.execute(
-        select(Reminder).where(
-            Reminder.trigger_at <= now, Reminder.status == "active"
-        )
+        select(Reminder)
+        .options(selectinload(Reminder.group))
+        .where(Reminder.trigger_at <= now, Reminder.status == "active")
     )
-    return list(result.scalars().all())
+    reminders = list(result.scalars().all())
+    key = _key()
+    for r in reminders:
+        set_decrypted(r, "message", decrypt(r.message, key))
+    return reminders
 
 
 async def find_active_reminders_by_message(
     session: AsyncSession, group_id: uuid.UUID, query: str
 ) -> list[Reminder]:
     """Find active reminders whose message matches query (case-insensitive)."""
-    result = await session.execute(
-        select(Reminder)
-        .where(
-            Reminder.group_id == group_id,
-            Reminder.status == "active",
-            Reminder.message.ilike(f"%{query}%"),
-        )
-        .order_by(Reminder.trigger_at)
-    )
-    return list(result.scalars().all())
+    reminders = await get_active_reminders(session, group_id)
+    return [
+        r for r in reminders
+        if query.lower() in r.message.lower()  # type: ignore[union-attr]
+    ]
 
 
 async def cancel_reminder(
@@ -96,6 +108,7 @@ async def snooze_reminder(
     reminder.trigger_at = new_trigger_at
     reminder.status = "active"
     await session.flush()
+    set_decrypted(reminder, "message", decrypt(reminder.message, _key()))
     return reminder
 
 

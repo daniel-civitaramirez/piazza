@@ -12,7 +12,24 @@ from piazza.config.settings import settings
 if settings.sentry_dsn:
     import sentry_sdk
 
-    sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=settings.sentry_traces_sample_rate)
+    _PII_KEYS = {"text", "sender_jid", "group_jid", "sender_name", "display_name", "content",
+                 "message", "description", "push_name", "wa_jid", "admin_jid", "snippet"}
+
+    def _scrub_pii(event, hint):
+        """Strip PII from Sentry events before sending."""
+        for frame in (event.get("exception", {}).get("values") or []):
+            for f in (frame.get("stacktrace", {}).get("frames") or []):
+                vs = f.get("vars")
+                if vs:
+                    for key in _PII_KEYS & vs.keys():
+                        vs[key] = "[redacted]"
+        return event
+
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        traces_sample_rate=settings.sentry_traces_sample_rate,
+        before_send=_scrub_pii,
+    )
 
 logger = structlog.get_logger()
 
@@ -39,6 +56,14 @@ def _configure_logging() -> None:
 async def lifespan(app: FastAPI):
     """Application lifespan: initialize and teardown resources."""
     _configure_logging()
+
+    # Validate encryption key before anything else
+    from piazza.core.encryption import validate_key
+
+    if not settings.encryption_key:
+        raise RuntimeError("ENCRYPTION_KEY must be configured")
+    validate_key(settings.encryption_key_bytes)
+
     logger.info("app_starting")
 
     # Initialize DB engine (import triggers creation)

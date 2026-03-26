@@ -5,10 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import select
 
 from piazza.core.exceptions import UNAPPROVED_GROUP_RESPONSE
-from piazza.db.models.injection_log import InjectionLog
 from piazza.db.repositories.group import get_or_create_group
 from piazza.messaging.whatsapp.schemas import Message
 from piazza.workers.process_message import process_message
@@ -158,7 +156,7 @@ class TestAgentPipeline:
     async def test_no_injection_log_for_clean_message(
         self, db_session, redis_client, mock_agent_runner
     ):
-        """A clean message does not create injection_log records."""
+        """A clean message does not trigger injection logging."""
         with (
             patch(
                 "piazza.workers.process_message.sanitize_input",
@@ -168,13 +166,13 @@ class TestAgentPipeline:
                 "piazza.workers.process_message.screen_for_injection",
                 return_value=("clean", False, 0.0),
             ),
+            patch("piazza.workers.process_message.logger") as mock_logger,
         ):
             await process_message(
                 _make_message("clean"), db_session, redis_client
             )
 
-        result = await db_session.execute(select(InjectionLog))
-        assert len(result.scalars().all()) == 0
+        mock_logger.warning.assert_not_called()
 
 
 # ---------- Injection pipeline tests ----------
@@ -216,22 +214,25 @@ class TestL1Flagging:
             l2_mock.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_l1_flagged_creates_log(
+    async def test_l1_flagged_logs_warning(
         self, db_session, redis_client, mock_agent_runner
     ):
-        """L1-flagged message creates an injection_log record with layer=L1."""
-        with patch(
-            "piazza.workers.process_message.sanitize_input",
-            return_value=("flagged", True),
+        """L1-flagged message logs a warning with layer=L1."""
+        with (
+            patch(
+                "piazza.workers.process_message.sanitize_input",
+                return_value=("flagged", True),
+            ),
+            patch("piazza.workers.process_message.logger") as mock_logger,
         ):
             await process_message(
                 _make_message("flagged"), db_session, redis_client
             )
 
-        result = await db_session.execute(select(InjectionLog))
-        logs = result.scalars().all()
-        assert len(logs) == 1
-        assert logs[0].layer == "L1"
+        mock_logger.warning.assert_called_once()
+        call_kwargs = mock_logger.warning.call_args
+        assert call_kwargs[0][0] == "injection_flagged"
+        assert call_kwargs[1]["layer"] == "L1"
 
 
 class TestL2Flagging:
@@ -257,10 +258,10 @@ class TestL2Flagging:
         assert "flagged for safety" in response
 
     @pytest.mark.asyncio
-    async def test_l2_flagged_creates_log(
+    async def test_l2_flagged_logs_warning(
         self, db_session, redis_client, mock_agent_runner
     ):
-        """L2-flagged message creates an injection_log record with layer=L2."""
+        """L2-flagged message logs a warning with layer=L2 and risk_score."""
         with (
             patch(
                 "piazza.workers.process_message.sanitize_input",
@@ -270,97 +271,35 @@ class TestL2Flagging:
                 "piazza.workers.process_message.screen_for_injection",
                 return_value=("text", True, 0.92),
             ),
+            patch("piazza.workers.process_message.logger") as mock_logger,
         ):
             await process_message(
                 _make_message("text"), db_session, redis_client
             )
 
-        result = await db_session.execute(select(InjectionLog))
-        logs = result.scalars().all()
-        assert len(logs) == 1
-        assert logs[0].layer == "L2"
-        assert logs[0].risk_score == 0.92
+        mock_logger.warning.assert_called_once()
+        call_kwargs = mock_logger.warning.call_args
+        assert call_kwargs[0][0] == "injection_flagged"
+        assert call_kwargs[1]["layer"] == "L2"
+        assert call_kwargs[1]["risk_score"] == 0.92
 
 
 class TestL1ShortCircuitsL2:
     @pytest.mark.asyncio
-    async def test_l1_flagged_only_creates_l1_log(
+    async def test_l1_flagged_only_logs_l1(
         self, db_session, redis_client, mock_agent_runner
     ):
-        """When L1 flags, only one injection_log record is created (L1 only)."""
-        with patch(
-            "piazza.workers.process_message.sanitize_input",
-            return_value=("bad text", True),
+        """When L1 flags, only one injection warning is logged (L1 only)."""
+        with (
+            patch(
+                "piazza.workers.process_message.sanitize_input",
+                return_value=("bad text", True),
+            ),
+            patch("piazza.workers.process_message.logger") as mock_logger,
         ):
             await process_message(
                 _make_message("bad text"), db_session, redis_client
             )
 
-        result = await db_session.execute(select(InjectionLog))
-        logs = result.scalars().all()
-        assert len(logs) == 1
-        assert logs[0].layer == "L1"
-
-
-class TestInjectionLogRecords:
-    @pytest.mark.asyncio
-    async def test_log_records_correct_risk_score(
-        self, db_session, redis_client, mock_agent_runner
-    ):
-        """Injection log records contain the correct risk score."""
-        with (
-            patch(
-                "piazza.workers.process_message.sanitize_input",
-                return_value=("text", False),
-            ),
-            patch(
-                "piazza.workers.process_message.screen_for_injection",
-                return_value=("text", True, 0.91),
-            ),
-        ):
-            await process_message(
-                _make_message("text"), db_session, redis_client
-            )
-
-        result = await db_session.execute(select(InjectionLog))
-        log = result.scalar_one()
-        assert log.risk_score == 0.91
-
-    @pytest.mark.asyncio
-    async def test_log_records_user_hash(
-        self, db_session, redis_client, mock_agent_runner
-    ):
-        """Injection log records contain the user's phone hash."""
-        from piazza.core.encryption import hash_phone
-
-        with patch(
-            "piazza.workers.process_message.sanitize_input",
-            return_value=("text", True),
-        ):
-            await process_message(
-                _make_message("text"), db_session, redis_client
-            )
-
-        result = await db_session.execute(select(InjectionLog))
-        log = result.scalar_one()
-        expected_hash = hash_phone("5511111111111@s.whatsapp.net")
-        assert log.user_hash == expected_hash
-
-    @pytest.mark.asyncio
-    async def test_log_records_snippet_truncated(
-        self, db_session, redis_client, mock_agent_runner
-    ):
-        """Injection log snippet is truncated to 100 chars."""
-        long_text = "x" * 200
-        with patch(
-            "piazza.workers.process_message.sanitize_input",
-            return_value=(long_text, True),
-        ):
-            await process_message(
-                _make_message(long_text), db_session, redis_client
-            )
-
-        result = await db_session.execute(select(InjectionLog))
-        log = result.scalar_one()
-        assert log.snippet is not None
-        assert len(log.snippet) == 100
+        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_args[1]["layer"] == "L1"

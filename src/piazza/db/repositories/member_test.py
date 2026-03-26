@@ -111,7 +111,7 @@ class TestFindMemberByName:
             group_id=sample_group.group_id,
             wa_id_hash=hash_phone("5588888888888@s.whatsapp.net"),
             wa_id_encrypted=encrypt("5588888888888@s.whatsapp.net", TEST_ENCRYPTION_KEY),
-            display_name="Alicia",
+            display_name=encrypt("Alicia", TEST_ENCRYPTION_KEY),
         )
         db_session.add(m)
         await db_session.flush()

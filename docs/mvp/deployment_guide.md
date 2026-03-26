@@ -76,7 +76,7 @@ uv run alembic upgrade head
 
 # Verify tables exist — go to Supabase dashboard → Table Editor
 # You should see: groups, members, expenses, expense_participants, settlements,
-# reminders, itinerary_items, notes, message_log, injection_log
+# reminders, itinerary_items, notes, message_log
 ```
 
 > **If migrations fail** with `prepared_statement_cache_size` errors: make sure you're on port 6543 (Supavisor), not 5432. Supavisor in transaction mode doesn't support prepared statements — your `engine.py` should already have `statement_cache_size=0` and `prepared_statement_cache_size=0` in `connect_args`.
@@ -256,6 +256,9 @@ REDIS_PASSWORD=<generate: openssl rand -hex 32>
 ANTHROPIC_API_KEY=sk-ant-...
 
 # === Security ===
+# CRITICAL: All user content (messages, expenses, reminders, itinerary, notes,
+# display names) is encrypted with this key before storage. Back it up securely.
+# Losing this key means losing access to all encrypted data.
 ENCRYPTION_KEY=<generate: python3 -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())">
 WEBHOOK_SECRET=<generate: openssl rand -hex 32>
 
@@ -567,7 +570,9 @@ Go to Supabase dashboard → Table Editor and verify:
 - `members` table has the group members
 - `expenses` table has the logged expenses
 - `message_log` table has message records (stores content for agent context)
-- `injection_log` table has the injection attempt
+
+> **Note:** Content columns (`description`, `message`, `title`, `content`, `display_name`, etc.) appear as binary blobs in the Supabase dashboard. This is expected — all user content is encrypted at the application level with AES-256-GCM before storage.
+- Application logs show `injection_flagged` warning for the injection attempt
 
 ### 9.4 Common issues and fixes
 

@@ -25,7 +25,7 @@ class Member(Base):
     )
     wa_id_hash: Mapped[str] = mapped_column(Text, nullable=False)
     wa_id_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )

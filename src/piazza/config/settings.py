@@ -54,6 +54,7 @@ class Settings(BaseSettings):
 
     # Agent
     conversation_context_limit: int = 10
+    message_log_retention_multiplier: int = 2
 
     # Worker
     worker_max_jobs: int = 10

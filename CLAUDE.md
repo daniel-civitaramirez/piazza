@@ -75,10 +75,10 @@ Expenses use a unified `participants: [{name, amount}]` format for both even and
 
 Mutation tools (delete, update, cancel) identify entries two ways:
 - **`item_number`**: Position from the tool's `list_*`/`show_*` output (1-indexed). Always unambiguous.
-- **`description`**: Substring match (`ILIKE %query%`). Returns disambiguation (bullets, no numbers) if >1 match.
+- **`description`**: Substring match (Python-side, post-decryption). Returns disambiguation (bullets, no numbers) if >1 match.
 
 Handlers branch: `item_number` first → `description` fallback → error if neither.
-`*_by_number` service functions reuse the same repo query + ordering as the list formatter.
+`*_by_number` service functions reuse the same repo query + ordering as the list function.
 
 ### Layer Separation
 
@@ -92,11 +92,52 @@ workers/          → arq jobs, message processing pipeline
 agent/            → LLM agent implementations
 ```
 
+### Encryption at Rest
+
+All user-generated content is encrypted at the application level before storage using AES-256-GCM (`core/encryption.py`). Supabase sees only opaque bytes.
+
+**Encrypted columns**: `Expense.description`, `Reminder.message`, `ItineraryItem.title/location/notes`, `Note.content/tag`, `MessageLog.content`, `Member.display_name`, `Member.wa_id_encrypted`, `Group.name_encrypted`
+
+**Repository pattern**: Repos encrypt on write, decrypt on read. Callers (services, handlers) always work with plaintext strings. Text search uses fetch-all + Python substring match (no ILIKE on ciphertext).
+
+**Key helpers** in `core/encryption.py`: `encrypt`, `decrypt` (idempotent — safe for SQLAlchemy identity map reuse), `encrypt_nullable`, `decrypt_nullable`, `set_decrypted` (sets value without marking dirty in SQLAlchemy), `validate_key`.
+
+**Message log retention**: After each message, entries beyond `conversation_context_limit * message_log_retention_multiplier` (default 10 * 2 = 20) are pruned per group. Configurable in settings.
+
 ### Security Pipeline
 
 - **L1** (`workers/security/sanitizer.py`): Regex patterns for XSS, SQL injection, command injection
 - **L2** (`workers/security/guard.py`): ML/heuristic screening via llm-guard with risk scoring
-- Blocked messages logged to `injection_log` table
+- Blocked messages logged via structured logging (no DB table — PII-free)
+
+## Adding a New Tool
+
+New tools must follow the existing patterns across all layers:
+
+### File structure
+Create `tools/<name>/` with: `handler.py`, `service.py`, `handler_test.py`, `service_test.py`. Add the repository in `db/repositories/<name>.py` with co-located `<name>_test.py`.
+
+### Model → Repository → Service → Handler
+
+1. **Model** (`db/models/`): Any user-content column must be `LargeBinary` (encrypted at rest). Non-content columns (IDs, timestamps, status flags, numeric amounts) stay as their native types.
+2. **Repository** (`db/repositories/`): Encrypt user-content fields on write using `encrypt`/`encrypt_nullable` from `core/encryption.py`. Decrypt on read using `decrypt`/`decrypt_nullable` + `set_decrypted` (avoids SQLAlchemy dirty tracking). Text search replaces ILIKE with fetch-all + Python substring match. Repos accept and return plaintext strings — encryption is internal.
+3. **Service** (`tools/*/service.py`): Business logic only. Receives/returns plaintext via repos. Raises `NotFoundError(entity, number=, query=)` for missing items. Must not import `settings` or `encrypt` directly — if a service mutates an encrypted column on a model object, it must go through the repo or encrypt inline.
+4. **Handler** (`tools/*/handler.py`): Entry point with signature `(session, group_id, member_id, entities) → dict`. Catches `NotFoundError` and builds structured response dicts. Uses `item_number` first, `description` fallback for mutations.
+
+### Registry
+Add the tool to `tools/registry.py`: map tool name → handler function, define the schema in Anthropic tool format. The `Entities` model in `tools/schemas.py` must include any new input fields.
+
+### Responses
+Use builders from `tools/responses.py`: `ok_response`, `list_response`, `empty_response`, `not_found_response`, `ambiguous_response`, `error_response`. Every handler dict must have a `status` key.
+
+### Logging
+Log operational fields only (event name, counts, durations, action types). Never log PII: no JIDs, phone numbers, display names, message content, or user-generated text. Use `group_id` (UUID) for correlation where available.
+
+### Testing
+Co-located `*_test.py` files. All tests async. Use `db_session` and `sample_group` fixtures from `conftest.py`. Tests that create members directly must encrypt `display_name` with `TEST_ENCRYPTION_KEY`. Repository tests verify round-trip encryption (write → read → assert plaintext). Handler tests go through the full stack (no DB mocking).
+
+### Migration
+Add an alembic migration for any schema changes. Encrypted columns require a data migration that reads plaintext, encrypts with `core/encryption.py`, and writes back. `ENCRYPTION_KEY` must be set when running migrations.
 
 ## Conventions
 
