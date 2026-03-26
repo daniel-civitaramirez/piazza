@@ -47,6 +47,12 @@ class Action:
     ADD_ITINERARY = "add_itinerary"
     REMOVE_ITINERARY = "remove_itinerary"
 
+    # Checklist
+    ADD_ITEM = "add_item"
+    CHECK_ITEM = "check_item"
+    UNCHECK_ITEM = "uncheck_item"
+    DELETE_ITEM = "delete_item"
+
     # Status
     GET_STATUS = "get_status"
 
@@ -93,6 +99,8 @@ class Entity:
     NOTES = "notes"
     ITINERARY = "itinerary"
     ITINERARY_ITEM = "itinerary_item"
+    CHECKLIST_ITEM = "checklist_item"
+    CHECKLIST_ITEMS = "checklist_items"
 
 
 # ---------- Response builders ----------

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from piazza.db.models.checklist import ChecklistItem
 from piazza.db.models.expense import Expense, ExpenseParticipant
 from piazza.db.models.itinerary import ItineraryItem
 from piazza.db.models.note import Note
@@ -22,6 +23,8 @@ class GroupStats:
     active_reminder_count: int = 0
     itinerary_item_count: int = 0
     note_count: int = 0
+    checklist_item_count: int = 0
+    checklist_done_count: int = 0
 
     @property
     def total_amount_display(self) -> str:
@@ -84,6 +87,20 @@ async def get_group_stats(session: AsyncSession, group_id: uuid.UUID) -> GroupSt
         )
     ).scalar_one()
 
+    # Checklist items
+    checklist_row = (
+        await session.execute(
+            select(
+                func.count(ChecklistItem.id),
+                func.count(ChecklistItem.id).filter(
+                    ChecklistItem.is_done == True  # noqa: E712
+                ),
+            ).where(ChecklistItem.group_id == group_id)
+        )
+    ).one()
+    checklist_item_count = checklist_row[0]
+    checklist_done_count = checklist_row[1]
+
     return GroupStats(
         expense_count=expense_count,
         total_amount_cents=total_amount_cents,
@@ -91,4 +108,6 @@ async def get_group_stats(session: AsyncSession, group_id: uuid.UUID) -> GroupSt
         active_reminder_count=active_reminders or 0,
         itinerary_item_count=itinerary_count or 0,
         note_count=note_count or 0,
+        checklist_item_count=checklist_item_count or 0,
+        checklist_done_count=checklist_done_count or 0,
     )

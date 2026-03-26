@@ -16,3 +16,5 @@ class Entities(BaseModel):
     items: list[dict] | None = None
     item_number: int | None = None
     new_description: str | None = None
+    list_name: str | None = None
+    show_done: bool | None = None
