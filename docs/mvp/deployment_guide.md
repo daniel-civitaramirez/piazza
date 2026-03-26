@@ -68,8 +68,9 @@ If this prints `1`, you're good. If it times out, check that your Supabase proje
 Before deploying, verify your Alembic migrations work against the real DB:
 
 ```bash
-# Set the env var temporarily
+# Set env vars temporarily
 export SUPABASE_DB_URL="postgresql+asyncpg://..."
+export ENCRYPTION_KEY="<your base64 key>"  # required — migration 009 encrypts existing data
 
 # Run migrations
 uv run alembic upgrade head
@@ -356,6 +357,8 @@ docker compose -f docker-compose.prod.yml exec ollama ollama list
 
 ### 6.9 Run database migrations
 
+`ENCRYPTION_KEY` must be set in `.env` before running migrations — migration 009 encrypts existing plaintext data.
+
 ```bash
 docker compose -f docker-compose.prod.yml exec app uv run alembic upgrade head
 ```
@@ -572,6 +575,7 @@ Go to Supabase dashboard → Table Editor and verify:
 - `message_log` table has message records (stores content for agent context)
 
 > **Note:** Content columns (`description`, `message`, `title`, `content`, `display_name`, etc.) appear as binary blobs in the Supabase dashboard. This is expected — all user content is encrypted at the application level with AES-256-GCM before storage.
+
 - Application logs show `injection_flagged` warning for the injection attempt
 
 ### 9.4 Common issues and fixes
@@ -586,6 +590,7 @@ Go to Supabase dashboard → Table Editor and verify:
 | Expense @mentions not resolving members | Display name mismatch | Check how `pushName` maps to `display_name` in your `members` table. WhatsApp names are set by users and can change. |
 | Supabase connection timeout | Wrong port or SSL | Ensure port 6543 (not 5432) and `sslmode=require` |
 | Caddy not issuing TLS cert | DNS not propagated yet | Run `dig piazza.yourdomain.com` — does it return your VPS IP? Wait and retry. |
+| App crashes on startup with `ENCRYPTION_KEY` error | Key missing or wrong length | Generate a 32-byte base64 key: `python3 -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())"` |
 | Evolution API shows "disconnected" | Phone logged out, or session expired | Re-scan QR code via the manager (SSH tunnel to port 8080) |
 
 ---
@@ -607,7 +612,7 @@ Go to Supabase dashboard → Table Editor and verify:
 2. Create a Python project
 3. Get the DSN (looks like `https://[key]@o[org].ingest.sentry.io/[project]`)
 4. Add to `.env`: `SENTRY_DSN=https://...`
-5. Sentry initialization is built-in — `main.py` automatically calls `sentry_sdk.init()` when `SENTRY_DSN` is set
+5. Sentry initialization is built-in — `main.py` automatically calls `sentry_sdk.init()` when `SENTRY_DSN` is set. PII (message text, phone numbers, display names) is automatically scrubbed from error reports via a `before_send` hook.
 6. Restart app + worker
 
 ### 10.3 Manual Deploy Process
@@ -666,6 +671,7 @@ Before inviting beta testers, verify all of these:
 - [ ] Sentry is receiving error reports (trigger a deliberate error to test)
 - [ ] UptimeRobot is pinging and shows "Up"
 - [ ] `docker stats` shows RAM usage under 7 GB
+- [ ] You have a backup of `ENCRYPTION_KEY` somewhere safe (password manager, not just `.env` on the server — losing this key means losing all encrypted data)
 - [ ] You have a backup of `injection_patterns.json` somewhere safe (not just on the server)
 
 ---
