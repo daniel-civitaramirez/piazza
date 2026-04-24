@@ -18,9 +18,14 @@ from piazza.core.exceptions import (
     FLAGGED_RESPONSE,
     GENERIC_ERROR_RESPONSE,
     UNAPPROVED_GROUP_RESPONSE,
+    WELCOME_MESSAGE,
+    WhatsAppSendError,
 )
+from piazza.db.models.group import Group
+from piazza.db.repositories import message_log as message_log_repo
 from piazza.db.repositories.group import get_or_create_group
 from piazza.db.repositories.member import get_active_members, get_or_create_member
+from piazza.messaging.whatsapp import client as wa_client
 from piazza.messaging.whatsapp.schemas import Message
 from piazza.workers.security.guard import screen_for_injection
 from piazza.workers.security.sanitizer import sanitize_input
@@ -79,6 +84,35 @@ async def _circuit_record_failure(redis: Redis) -> None:
         logger.warning("agent_circuit_breaker_opened", failures=failure_count)
 
 
+async def _maybe_send_welcome(session: AsyncSession, group: Group) -> None:
+    """Send the one-time onboarding message the first time an approved group messages us.
+
+    Best-effort: if WhatsApp delivery fails, the flag is not flipped and we'll retry on
+    the next inbound message. Logged to message_log so the agent's recent context
+    reflects that the group has already been introduced.
+    """
+    if group.welcome_sent:
+        return
+    try:
+        wa_message_id = await wa_client.send_text(group.wa_jid, WELCOME_MESSAGE)
+    except WhatsAppSendError:
+        logger.warning("welcome_send_failed", group_id=str(group.id))
+        return
+    try:
+        await message_log_repo.create_entry(
+            session,
+            group_id=group.id,
+            role="assistant",
+            content=WELCOME_MESSAGE,
+            wa_message_id=wa_message_id,
+        )
+    except Exception:
+        logger.exception("welcome_log_failed", group_id=str(group.id))
+    group.welcome_sent = True
+    await session.commit()
+    logger.info("welcome_sent", group_id=str(group.id))
+
+
 async def _run_agent(context: AgentContext, redis: Redis | None) -> str:
     """Try open-source agent first, fall back to Claude on failure."""
     if settings.opensource_agent_enabled and not await _circuit_is_open(redis):
@@ -127,6 +161,8 @@ async def process_message(
             session, group.id, message.sender_jid, message.sender_name,
         )
         await session.commit()
+
+        await _maybe_send_welcome(session, group)
 
         text = _strip_bot_mention(message.text, message.mentioned_jids)
 

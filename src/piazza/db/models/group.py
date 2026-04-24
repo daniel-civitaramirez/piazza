@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Text
+from sqlalchemy import Boolean, Text, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from piazza.config.settings import APPROVAL_PENDING
@@ -22,6 +22,9 @@ class Group(TimestampMixin, Base):
     timezone: Mapped[str] = mapped_column(Text, default="UTC")
     approval_status: Mapped[str] = mapped_column(
         Text, default=APPROVAL_PENDING, server_default=APPROVAL_PENDING
+    )
+    welcome_sent: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
     )
     # Relationships
     members: Mapped[list["Member"]] = relationship(  # noqa: F821

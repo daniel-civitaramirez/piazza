@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from piazza.core.exceptions import UNAPPROVED_GROUP_RESPONSE
+from piazza.core.exceptions import UNAPPROVED_GROUP_RESPONSE, WhatsAppSendError
 from piazza.db.repositories.group import get_or_create_group
 from piazza.messaging.whatsapp.schemas import Message
-from piazza.workers.process_message import process_message
+from piazza.workers.process_message import _maybe_send_welcome, process_message
 
 
 def _make_message(text: str) -> Message:
@@ -28,6 +28,16 @@ def _reset_sanitizer_patterns():
     mod._INJECTION_PATTERNS = []
     yield
     mod._INJECTION_PATTERNS = []
+
+
+@pytest.fixture(autouse=True)
+def _suppress_welcome():
+    """Pipeline tests are orthogonal to onboarding — skip the welcome path."""
+    with patch(
+        "piazza.workers.process_message._maybe_send_welcome",
+        new=AsyncMock(return_value=None),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -339,3 +349,52 @@ class TestL1ShortCircuitsL2:
 
         mock_logger.warning.assert_called_once()
         assert mock_logger.warning.call_args[1]["layer"] == "L1"
+
+
+# ---------- Welcome onboarding tests ----------
+
+
+class TestWelcomeOnboarding:
+    """Direct tests of _maybe_send_welcome (the autouse fixture suppresses it elsewhere)."""
+
+    @pytest.mark.asyncio
+    async def test_first_message_sends_welcome_and_flips_flag(self, db_session):
+        group, _ = await get_or_create_group(db_session, "120363077@g.us")
+        await db_session.flush()
+        assert group.welcome_sent is False
+
+        with patch(
+            "piazza.workers.process_message.wa_client.send_text",
+            new=AsyncMock(return_value="wa-msg-1"),
+        ) as send:
+            await _maybe_send_welcome(db_session, group)
+
+        send.assert_called_once()
+        assert group.welcome_sent is True
+
+    @pytest.mark.asyncio
+    async def test_already_welcomed_group_is_noop(self, db_session):
+        group, _ = await get_or_create_group(db_session, "120363078@g.us")
+        group.welcome_sent = True
+        await db_session.flush()
+
+        with patch(
+            "piazza.workers.process_message.wa_client.send_text",
+            new=AsyncMock(),
+        ) as send:
+            await _maybe_send_welcome(db_session, group)
+
+        send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_failure_keeps_flag_false_for_retry(self, db_session):
+        group, _ = await get_or_create_group(db_session, "120363079@g.us")
+        await db_session.flush()
+
+        with patch(
+            "piazza.workers.process_message.wa_client.send_text",
+            new=AsyncMock(side_effect=WhatsAppSendError("boom")),
+        ):
+            await _maybe_send_welcome(db_session, group)
+
+        assert group.welcome_sent is False

@@ -99,7 +99,12 @@ class SampleGroup:
 @pytest_asyncio.fixture
 async def sample_group(db_session: AsyncSession) -> SampleGroup:
     """Pre-created group with 3 members: Alice, Bob, Charlie."""
-    group = Group(wa_jid="120363001@g.us", timezone="UTC", approval_status="approved")
+    group = Group(
+        wa_jid="120363001@g.us",
+        timezone="UTC",
+        approval_status="approved",
+        welcome_sent=True,
+    )
     db_session.add(group)
     await db_session.flush()
 
