@@ -136,14 +136,26 @@ class BaseAgent(ABC):
             )
             final_text = final.text
         except (AgentTimeoutError, AgentUnavailableError):
-            logger.warning("agent_followup_failed_using_raw_tool_output")
+            logger.warning("agent_followup_failed")
             final_text = None
 
         self._log_response(start, tools_called)
 
         if final_text:
             return final_text
-        return "\n\n".join(r.content for r in tool_results if not r.is_error)
+
+        # Followup failed — try a plain formatting call with results embedded
+        results_text = "\n\n".join(r.content for r in tool_results if not r.is_error)
+        if results_text:
+            try:
+                formatting_content = f"{user_content}\n\n[Tool results: {results_text}]"
+                fmt = await self._generate(AGENT_SYSTEM_PROMPT, formatting_content)
+                if fmt.text:
+                    return fmt.text
+            except (AgentTimeoutError, AgentUnavailableError):
+                pass
+
+        return UNKNOWN_FALLBACK
 
     async def _hydrate_context(self, context: AgentContext) -> None:
         """Fetch conversation history and reply context."""
