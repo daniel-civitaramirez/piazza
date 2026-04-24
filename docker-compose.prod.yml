@@ -101,8 +101,6 @@ services:
       - WORKER_JOB_TIMEOUT
       - GROUP_LOCK_TIMEOUT
       - GROUP_LOCK_WAIT
-      - HUMAN_DELAY_MIN
-      - HUMAN_DELAY_MAX
       - REMINDER_CRON_SECONDS
       - HF_HOME=/hf_cache
     volumes:
@@ -166,8 +164,6 @@ services:
       - WORKER_JOB_TIMEOUT
       - GROUP_LOCK_TIMEOUT
       - GROUP_LOCK_WAIT
-      - HUMAN_DELAY_MIN
-      - HUMAN_DELAY_MAX
       - REMINDER_CRON_SECONDS
       - HF_HOME=/hf_cache
     volumes:

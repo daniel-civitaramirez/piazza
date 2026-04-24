@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import random
 import time
 
 import structlog
@@ -55,9 +53,6 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
 
     # Send typing indicator before processing (best-effort)
     await client.send_typing(message.group_jid)
-
-    # Small random delay to feel more human (1-3 seconds)
-    await asyncio.sleep(random.uniform(settings.human_delay_min, settings.human_delay_max))
 
     # Per-group rate limiting
     if redis and settings.group_rate_limit_per_minute > 0:

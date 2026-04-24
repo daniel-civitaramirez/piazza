@@ -19,15 +19,6 @@ def _raw_message(group_jid: str = "120363001@g.us", text: str = "hello") -> dict
     }
 
 
-@pytest.fixture(autouse=True)
-def _fast_delays(monkeypatch):
-    """Eliminate human-feel delays in tests."""
-    from piazza.config.settings import settings
-
-    monkeypatch.setattr(settings, "human_delay_min", 0.0)
-    monkeypatch.setattr(settings, "human_delay_max", 0.0)
-
-
 @pytest.fixture
 def _stub_externals():
     """Stub WhatsApp client and DB logging so jobs don't need real infra."""
