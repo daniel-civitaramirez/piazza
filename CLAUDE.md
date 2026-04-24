@@ -62,6 +62,69 @@ Connections go through Supavisor transaction mode (port 6543), which does not su
 
 `GET /health` reports per-service status (DB, Redis, Ollama, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until the Evolution API instance is linked via QR.
 
+### Deploying code and/or DB changes to the VPS
+
+Image layout: `./src` is bind-mounted into `app` and `worker` (compose), but `alembic/`, `pyproject.toml`, and `uv.lock` are COPYed at build time. This dictates which deploys need a rebuild.
+
+Match the procedure to the change:
+
+**1. Source-only change (no schema, no deps)** — fastest path, no rebuild:
+
+```bash
+ssh -i ~/.ssh/piazza_hetzner deploy@<vps-ip> && cd /opt/piazza
+git pull origin main
+docker compose -f docker-compose.prod.yml restart app worker
+```
+
+**2. Dependency change (`pyproject.toml` / `uv.lock`)** — rebuild required:
+
+```bash
+git pull origin main
+docker compose -f docker-compose.prod.yml build app worker
+docker compose -f docker-compose.prod.yml up -d app worker
+```
+
+**3. DB migration (with or without source changes)** — rebuild required so the new migration file lands in the image, then migrate **before** swapping containers to keep zero downtime:
+
+```bash
+git pull origin main
+docker compose -f docker-compose.prod.yml build app worker
+
+# One-shot container from the freshly built image; --rm auto-deletes.
+# Uses the same Supavisor URL the app uses — alembic/env.py sets the
+# statement_cache_size flags that make this work over port 6543.
+docker compose -f docker-compose.prod.yml run --rm app uv run alembic current
+docker compose -f docker-compose.prod.yml run --rm app uv run alembic upgrade head
+
+# Only after migration succeeds, swap containers:
+docker compose -f docker-compose.prod.yml up -d app worker
+```
+
+For migrations that backfill existing rows (e.g. defaulting a new column to a non-empty value for active groups), put the backfill in `upgrade()` — Alembic wraps the transaction. Verify with a `SELECT` in Supabase before swapping containers.
+
+**4. `.env` change** — recreate (not restart) so compose re-reads the file:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d app worker
+```
+
+**Things to never do**
+
+- Don't `docker compose down` — it stops Caddy + Evolution API and breaks the WhatsApp session (requires QR re-link).
+- Don't run alembic against a host-installed `uv`/Python — host may not have them; always go through the container.
+- Don't override `SUPABASE_DB_URL` to the session-mode endpoint — `alembic/env.py` already handles Supavisor transaction mode.
+- Don't swap containers before running the migration when adding a new schema-dependent column — the new code will crash on the missing column until the migration completes.
+
+**After any deploy**, smoke test:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs app worker --tail 50
+curl -fsS https://<DOMAIN>/health | jq
+```
+
+Other VPS-specific commands (SSH key, paths, Supabase project ID, Evolution API tunnel) live in the gitignored `docs/mvp/piazza_config.md`.
+
 ## Architecture
 
 **WhatsApp group productivity agent** — expense tracking, reminders, itinerary, notes, and group status via WhatsApp.
