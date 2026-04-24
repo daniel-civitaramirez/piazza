@@ -81,7 +81,7 @@ async def _circuit_record_failure(redis: Redis) -> None:
 
 async def _run_agent(context: AgentContext, redis: Redis | None) -> str:
     """Try open-source agent first, fall back to Claude on failure."""
-    if not await _circuit_is_open(redis):
+    if settings.opensource_agent_enabled and not await _circuit_is_open(redis):
         try:
             return await get_opensource_agent().run(context)
         except (AgentTimeoutError, AgentUnavailableError) as exc:

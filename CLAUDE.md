@@ -20,7 +20,47 @@ uv run mypy src/piazza/
 # Local services (requires Docker)
 docker compose up -d                    # redis + ollama
 docker compose -f docker-compose.prod.yml up -d  # full stack with evolution-api
+
+# Migrations (ENCRYPTION_KEY must be set — migration 009 encrypts existing data)
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "..."
 ```
+
+## Deployment
+
+Production runs via `docker-compose.prod.yml` with 7 services: `redis`, `ollama`, `evolution-postgres`, `evolution-api`, `app`, `worker`, `caddy`. Caddy handles auto-TLS and reverse-proxies to `app:8000`.
+
+### Required env vars
+
+- `SUPABASE_DB_URL` — asyncpg-prefixed Supavisor transaction-mode URL (port 6543, `?ssl=require`)
+- `ANTHROPIC_API_KEY`, `ENCRYPTION_KEY` (base64 32 bytes), `WEBHOOK_SECRET`, `REDIS_PASSWORD`
+- `EVO_API_KEY`, `EVO_DB_PASSWORD`, `EVO_INSTANCE_NAME`, `BOT_JID`, `DOMAIN`
+- Optional: `ADMIN_JID` (empty ⇒ auto-approve all groups), `SENTRY_DSN`, `OPENEXCHANGERATES_KEY`, `OLLAMA_MODEL` (override default `qwen3.5:4b`)
+
+### Env vars set by compose (do NOT put in `.env`)
+
+`EVO_API_URL`, `OLLAMA_URL`, `REDIS_URL`, `INJECTION_PATTERNS_PATH` — overridden to container hostnames by `docker-compose.prod.yml`.
+
+### Supabase / asyncpg constraint
+
+Connections go through Supavisor transaction mode (port 6543), which does not support prepared statements. `engine.py` sets `statement_cache_size=0` and `prepared_statement_cache_size=0` in `connect_args`. Do not use port 5432 or remove these flags.
+
+### Files not in git
+
+- `config/injection_patterns.json` — L1/L2 regex patterns, deployed out-of-band (scp). Both `app` and `worker` containers mount it read-only.
+- `docs/mvp/piazza_config.md` — deployment secrets and infra references.
+
+### Group approval
+
+`Group.approval_status` is `pending` | `approved`. When `ADMIN_JID` is unset, new groups auto-approve. Otherwise approvals are flipped manually via SQL in Supabase.
+
+### Sentry
+
+`main.py` auto-initializes `sentry_sdk` when `SENTRY_DSN` is set. A `before_send` hook scrubs PII (message text, phone numbers, display names) from error reports.
+
+### Health endpoint
+
+`GET /health` reports per-service status (DB, Redis, Ollama, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until the Evolution API instance is linked via QR.
 
 ## Architecture
 
@@ -45,6 +85,7 @@ Both tiers are full agents with tool use (not classifiers). They share `BaseAgen
 - **ClaudeAgent**: Anthropic (haiku-4-5), native format, 15s timeout
 - **Fallback logic** lives in `workers/process_message.py:_run_agent()`, not in agent classes
 - **Circuit breaker**: 3 failures in 120s → 600s cooldown on Ollama
+- **Disable Ollama tier entirely**: set `OPENSOURCE_AGENT_ENABLED=false` to skip straight to Claude (useful when Ollama is unavailable or unreliable on a given host). Default is `true`.
 
 ### Tool Pattern
 

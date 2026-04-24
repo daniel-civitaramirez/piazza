@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     # LLM
     anthropic_api_key: str = ""
+    opensource_agent_enabled: bool = True
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3.5:4b"
     ollama_timeout: float = 10.0

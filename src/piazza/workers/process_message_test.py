@@ -174,6 +174,42 @@ class TestAgentPipeline:
 
         mock_logger.warning.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_opensource_disabled_skips_to_claude(
+        self, db_session, redis_client
+    ):
+        """When opensource_agent_enabled=False, Claude is called directly."""
+        opensource = MagicMock()
+        opensource.run = AsyncMock(return_value="should-not-run")
+        claude = MagicMock()
+        claude.run = AsyncMock(return_value="claude response")
+
+        with (
+            patch(
+                "piazza.workers.process_message.get_opensource_agent",
+                return_value=opensource,
+            ),
+            patch(
+                "piazza.workers.process_message.get_claude_agent",
+                return_value=claude,
+            ),
+            patch(
+                "piazza.workers.process_message.screen_for_injection",
+                return_value=("hello", False, 0.0),
+            ),
+            patch(
+                "piazza.workers.process_message.settings.opensource_agent_enabled",
+                False,
+            ),
+        ):
+            response = await process_message(
+                _make_message("hello"), db_session, redis_client
+            )
+
+        opensource.run.assert_not_called()
+        claude.run.assert_called_once()
+        assert response == "claude response"
+
 
 # ---------- Injection pipeline tests ----------
 
