@@ -33,6 +33,7 @@ class WebhookKey(BaseModel):
     from_me: bool = Field(False, alias="fromMe")
     id: str = ""
     participant: str | None = None
+    participant_alt: str | None = Field(None, alias="participantAlt")
 
 
 class ContextInfo(BaseModel):
@@ -74,6 +75,7 @@ class WebhookData(BaseModel):
     push_name: str = Field("", alias="pushName")
     message: WebhookMessageContent | None = None
     message_timestamp: int | None = Field(None, alias="messageTimestamp")
+    context_info: ContextInfo | None = Field(None, alias="contextInfo")
 
 
 class WebhookPayload(BaseModel):
@@ -90,8 +92,11 @@ class WebhookPayload(BaseModel):
 class GroupParticipant(BaseModel):
     """A participant entry in a groups.upsert event."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     admin: str | None = None
+    phone_number: str | None = Field(None, alias="phoneNumber")
 
 
 class GroupUpsertData(BaseModel):

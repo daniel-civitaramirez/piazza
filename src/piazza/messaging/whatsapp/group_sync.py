@@ -66,7 +66,8 @@ async def handle_group_upsert(raw: dict) -> None:
 
             synced = 0
             for participant in data.participants:
-                jid = participant.id
+                # Evolution API v2 uses LID format for id; phoneNumber has the real JID
+                jid = participant.phone_number or participant.id
                 if jid and jid.endswith("@s.whatsapp.net"):
                     await get_or_create_member_by_jid(
                         session, group.id, jid
@@ -86,9 +87,9 @@ async def handle_group_upsert(raw: dict) -> None:
                     group_jid=data.id,
                     subject=data.subject,
                     participant_jids=[
-                        p.id
+                        (p.phone_number or p.id)
                         for p in data.participants
-                        if p.id.endswith("@s.whatsapp.net")
+                        if (p.phone_number or p.id).endswith("@s.whatsapp.net")
                     ],
                 )
     except Exception:

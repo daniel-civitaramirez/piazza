@@ -66,7 +66,8 @@ def extract_sender_info(
     if not data.push_name:
         return None
 
-    sender_jid = key.participant or key.remote_jid
+    # Use participantAlt (phone JID) when participant is LID format
+    sender_jid = key.participant_alt or key.participant or key.remote_jid
     # Don't learn from the bot's own JID
     if sender_jid == bot_jid:
         return None
@@ -117,27 +118,39 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
         return None
 
     # Check mention / reply-to-bot
+    # contextInfo can be top-level on data OR inside extendedTextMessage
     mentioned_jids: list[str] = []
     reply_to_id: str | None = None
     ctx = None
 
     if data.message and data.message.extended_text_message:
         ctx = data.message.extended_text_message.context_info
-        if ctx:
-            mentioned_jids = ctx.mentioned_jid
-            reply_to_id = ctx.stanza_id
-        logger.debug(
-            "parse_extended_text",
-            has_context=ctx is not None,
-            mentioned_jids=mentioned_jids,
-            ctx_participant=ctx.participant if ctx else None,
-        )
 
-    is_mention = bot_jid in mentioned_jids
+    if ctx is None:
+        ctx = data.context_info
+
+    if ctx:
+        mentioned_jids = ctx.mentioned_jid
+        reply_to_id = ctx.stanza_id
+
+    logger.debug(
+        "parse_context_info",
+        ctx_source="extended" if (data.message and data.message.extended_text_message and data.message.extended_text_message.context_info) else "top_level",
+        mentioned_jids=mentioned_jids,
+        ctx_participant=ctx.participant if ctx else None,
+    )
+
+    # Bot JID may be phone format (33688511175@s.whatsapp.net) while mentions
+    # use LID format (75192697139363@lid) — extract phone number for comparison
+    bot_phone = bot_jid.split("@")[0]
+    is_mention = bot_jid in mentioned_jids or any(
+        jid.split("@")[0] == bot_phone for jid in mentioned_jids
+    )
     is_reply_to_bot = (
         reply_to_id is not None
         and ctx is not None
-        and ctx.participant == bot_jid
+        and ctx.participant is not None
+        and (ctx.participant == bot_jid or ctx.participant.split("@")[0] == bot_phone)
     )
 
     logger.debug(
@@ -153,8 +166,8 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
         logger.debug("parse_skip_no_mention")
         return None
 
-    # Determine sender JID — in groups, participant holds the sender
-    sender_jid = key.participant or key.remote_jid
+    # Use participantAlt (phone JID) when participant is LID format
+    sender_jid = key.participant_alt or key.participant or key.remote_jid
 
     return Message(
         sender_jid=sender_jid,
