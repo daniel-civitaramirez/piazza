@@ -97,28 +97,17 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
 
     # Reject bot's own messages
     if key.from_me:
-        logger.debug("parse_skip_from_me")
         return None
 
     # Only process group messages
     if not key.remote_jid.endswith("@g.us"):
-        logger.debug("parse_skip_not_group", remote_jid=key.remote_jid)
         return None
 
     # Extract text from either message shape
     text = _extract_text(data)
-    logger.debug(
-        "parse_text_extraction",
-        has_message=data.message is not None,
-        has_extended=bool(data.message and data.message.extended_text_message),
-        has_conversation=bool(data.message and data.message.conversation),
-        text_found=text is not None,
-    )
     if not text:
-        logger.debug("parse_skip_no_text")
         return None
 
-    # Check mention / reply-to-bot
     # contextInfo can be top-level on data OR inside extendedTextMessage
     mentioned_jids: list[str] = []
     reply_to_id: str | None = None
@@ -134,13 +123,6 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
         mentioned_jids = ctx.mentioned_jid
         reply_to_id = ctx.stanza_id
 
-    logger.debug(
-        "parse_context_info",
-        ctx_source="extended" if (data.message and data.message.extended_text_message and data.message.extended_text_message.context_info) else "top_level",
-        mentioned_jids=mentioned_jids,
-        ctx_participant=ctx.participant if ctx else None,
-    )
-
     # Bot may be identified by phone JID or LID — check both
     bot_identifiers = {bot_jid}
     if settings.bot_lid:
@@ -154,17 +136,7 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
         and ctx.participant in bot_identifiers
     )
 
-    logger.debug(
-        "parse_mention_check",
-        bot_jid=bot_jid,
-        mentioned_jids=mentioned_jids,
-        is_mention=is_mention,
-        is_reply_to_bot=is_reply_to_bot,
-        text_preview=text[:50] if text else None,
-    )
-
     if not is_mention and not is_reply_to_bot:
-        logger.debug("parse_skip_no_mention")
         return None
 
     # Use participantAlt (phone JID) when participant is LID format
