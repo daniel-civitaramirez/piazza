@@ -85,8 +85,8 @@ async def send_text(group_jid: str, text: str) -> str | None:
 async def send_typing(group_jid: str) -> None:
     """Send typing indicator (composing presence) to a WhatsApp group."""
     client = _get_client()
-    url = _url("chat/presence")
-    payload = {"number": group_jid, "presence": "composing"}
+    url = _url("chat/sendPresence")
+    payload = {"number": group_jid, "options": {"presence": "composing", "delay": 1200}}
 
     try:
         resp = await client.post(url, json=payload, headers=_headers())
