@@ -74,7 +74,7 @@ async def webhook(
 
     raw: dict = await request.json()
     event = raw.get("event", "")
-    logger.debug("webhook_raw_event", event=event, keys=list(raw.keys()))
+    logger.debug("webhook_raw_event", webhook_event=event, keys=list(raw.keys()))
 
     if event == "messages.upsert":
         # Learn display name from every group message (lightweight, before mention gate)
