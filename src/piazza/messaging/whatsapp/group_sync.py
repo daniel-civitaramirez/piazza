@@ -69,10 +69,11 @@ async def handle_group_upsert(raw: dict) -> None:
                 # Evolution API v2 uses LID format for id; phoneNumber has the real JID
                 jid = participant.phone_number or participant.id
                 if jid and jid.endswith("@s.whatsapp.net"):
-                    await get_or_create_member_by_jid(
-                        session, group.id, jid
-                    )
+                    await get_or_create_member_by_jid(session, group.id, jid)
                     synced += 1
+
+                if settings.discover_bot_lid and jid == settings.bot_jid and participant.id.endswith("@lid"):
+                    logger.info("bot_lid_found", bot_lid=participant.id, hint="Set BOT_LID in .env and disable DISCOVER_BOT_LID")
 
 
             await session.commit()

@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     evo_api_url: str = "http://localhost:8080"
     evo_instance_name: str = "piazza-main"
     bot_jid: str = ""
-    bot_lid: str = ""  # LID format JID (e.g. 75192697139363@lid), auto-discovered if empty
+    bot_lid: str = ""
+    discover_bot_lid: bool = False  # enable once to log BOT_LID, then set BOT_LID and disable
 
     # Database
     supabase_db_url: str = "sqlite+aiosqlite://"
