@@ -41,7 +41,10 @@ async def handle_group_upsert(raw: dict) -> None:
     as temporary names until learned from messages.
     """
     try:
-        data = GroupUpsertData(**raw.get("data", {}))
+        raw_data = raw.get("data", {})
+        if isinstance(raw_data, list):
+            raw_data = raw_data[0] if raw_data else {}
+        data = GroupUpsertData(**raw_data)
     except Exception:
         logger.exception("group_upsert_parse_error")
         return
