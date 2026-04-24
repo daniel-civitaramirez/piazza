@@ -50,6 +50,8 @@ services:
       - WEBHOOK_GLOBAL_URL=http://app:8000/webhook
       - WEBHOOK_GLOBAL_ENABLED=true
       - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=false
+      - WEBHOOK_GLOBAL_WEBHOOK_BASE64=false
+      - WEBHOOK_GLOBAL_SECRET=${WEBHOOK_SECRET}
     volumes:
       - evolution_data:/evolution/instances
     depends_on:
