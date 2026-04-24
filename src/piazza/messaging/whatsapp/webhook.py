@@ -64,6 +64,7 @@ async def webhook(
 
     # HMAC verification (if webhook_secret is configured)
     if settings.webhook_secret:
+        logger.debug("webhook_headers", headers=dict(request.headers))
         if not x_webhook_signature:
             logger.warning("webhook_missing_signature")
             return Response(status_code=200)
