@@ -51,7 +51,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
 
     message = Message(**raw_message)
     redis = ctx.get("redis")
-    logger.info("job_started", group_jid=message.group_jid, text_preview=message.text[:50])
+    logger.info("job_started")
 
     # Send typing indicator before processing (best-effort)
     await client.send_typing(message.group_jid)
@@ -104,7 +104,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
         except Exception:
             logger.warning("group_lock_release_failed")
 
-    logger.info("job_response_ready", response_preview=response[:80])
+    logger.info("job_response_ready")
 
     # Attempt delivery; if send_text raises after retries, log it
     wa_message_id: str | None = None

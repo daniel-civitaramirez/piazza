@@ -72,7 +72,7 @@ async def handle_group_upsert(raw: dict) -> None:
                     synced += 1
 
                 if settings.discover_bot_lid and jid == settings.bot_jid and participant.id.endswith("@lid"):
-                    logger.info("bot_lid_found", bot_lid=participant.id, hint="Set BOT_LID in .env and disable DISCOVER_BOT_LID")
+                    logger.info("bot_lid_found", hint="Check Evolution API manager for bot participant ID, set BOT_LID in .env, then disable DISCOVER_BOT_LID")
 
 
             await session.commit()

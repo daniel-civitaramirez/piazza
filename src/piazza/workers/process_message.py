@@ -112,7 +112,7 @@ async def process_message(
 
     try:
         # 1. Setup
-        logger.info("pipeline_start", group_jid=message.group_jid, sender_jid=message.sender_jid)
+        logger.info("pipeline_start")
         group, _ = await get_or_create_group(session, message.group_jid)
 
         if group.approval_status != APPROVAL_APPROVED:
@@ -154,7 +154,7 @@ async def process_message(
         )
 
         # 4. Run agent (open-source → Claude fallback)
-        logger.info("pipeline_calling_agent", group_id=str(group.id), text_preview=screened[:50])
+        logger.info("pipeline_calling_agent", group_id=str(group.id))
         response = await _run_agent(context, redis)
 
     except Exception:
