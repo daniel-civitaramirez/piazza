@@ -60,6 +60,7 @@ services:
   app:
     build: .
     environment:
+      - ADMIN_JID=${ADMIN_JID}
       - EVO_API_KEY=${EVO_API_KEY}
       - EVO_API_URL=http://evolution-api:8080
       - EVO_INSTANCE_NAME=${EVO_INSTANCE_NAME}
@@ -94,6 +95,7 @@ services:
     build: .
     command: ["arq", "piazza.workers.jobs.WorkerSettings"]
     environment:
+      - ADMIN_JID=${ADMIN_JID}
       - EVO_API_KEY=${EVO_API_KEY}
       - EVO_API_URL=http://evolution-api:8080
       - EVO_INSTANCE_NAME=${EVO_INSTANCE_NAME}
