@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     evo_api_url: str = "http://localhost:8080"
     evo_instance_name: str = "piazza-main"
     bot_jid: str = ""
+    bot_lid: str = ""  # LID format JID (e.g. 75192697139363@lid), auto-discovered if empty
 
     # Database
     supabase_db_url: str = "sqlite+aiosqlite://"

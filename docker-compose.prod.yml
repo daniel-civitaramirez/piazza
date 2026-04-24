@@ -65,6 +65,7 @@ services:
       - EVO_API_URL=http://evolution-api:8080
       - EVO_INSTANCE_NAME=${EVO_INSTANCE_NAME}
       - BOT_JID=${BOT_JID}
+      - BOT_LID=${BOT_LID}
       - SUPABASE_DB_URL=${SUPABASE_DB_URL}
       - REDIS_URL=redis://redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
@@ -101,6 +102,7 @@ services:
       - EVO_API_URL=http://evolution-api:8080
       - EVO_INSTANCE_NAME=${EVO_INSTANCE_NAME}
       - BOT_JID=${BOT_JID}
+      - BOT_LID=${BOT_LID}
       - SUPABASE_DB_URL=${SUPABASE_DB_URL}
       - REDIS_URL=redis://redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}

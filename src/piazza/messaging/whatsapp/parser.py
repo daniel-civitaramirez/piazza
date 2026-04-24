@@ -140,17 +140,18 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
         ctx_participant=ctx.participant if ctx else None,
     )
 
-    # Bot JID may be phone format (33688511175@s.whatsapp.net) while mentions
-    # use LID format (75192697139363@lid) — extract phone number for comparison
-    bot_phone = bot_jid.split("@")[0]
-    is_mention = bot_jid in mentioned_jids or any(
-        jid.split("@")[0] == bot_phone for jid in mentioned_jids
-    )
+    # Bot may be identified by phone JID or LID — check both
+    from piazza.config.settings import settings as _settings
+    bot_identifiers = {bot_jid}
+    if _settings.bot_lid:
+        bot_identifiers.add(_settings.bot_lid)
+
+    is_mention = bool(bot_identifiers & set(mentioned_jids))
     is_reply_to_bot = (
         reply_to_id is not None
         and ctx is not None
         and ctx.participant is not None
-        and (ctx.participant == bot_jid or ctx.participant.split("@")[0] == bot_phone)
+        and ctx.participant in bot_identifiers
     )
 
     logger.debug(

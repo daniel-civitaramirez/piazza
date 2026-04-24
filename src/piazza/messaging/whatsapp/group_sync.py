@@ -74,6 +74,12 @@ async def handle_group_upsert(raw: dict) -> None:
                     )
                     synced += 1
 
+                # Auto-discover bot's LID for mention detection
+                if jid == settings.bot_jid and participant.id.endswith("@lid"):
+                    if not settings.bot_lid:
+                        settings.bot_lid = participant.id
+                        logger.info("bot_lid_discovered", bot_lid=participant.id)
+
             await session.commit()
             logger.info(
                 "group_upsert_synced",
