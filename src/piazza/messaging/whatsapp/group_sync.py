@@ -44,6 +44,7 @@ async def handle_group_upsert(raw: dict) -> None:
         raw_data = raw.get("data", {})
         if isinstance(raw_data, list):
             raw_data = raw_data[0] if raw_data else {}
+        logger.debug("group_upsert_raw_data", raw_data=raw_data)
         data = GroupUpsertData(**raw_data)
     except Exception:
         logger.exception("group_upsert_parse_error")
