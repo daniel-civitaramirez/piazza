@@ -105,19 +105,33 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
 
     # Extract text from either message shape
     text = _extract_text(data)
+    logger.debug(
+        "parse_text_extraction",
+        has_message=data.message is not None,
+        has_extended=bool(data.message and data.message.extended_text_message),
+        has_conversation=bool(data.message and data.message.conversation),
+        text_found=text is not None,
+    )
     if not text:
-        logger.debug("parse_skip_no_text", message_keys=list(data.message.__dict__.keys()) if data.message else [])
+        logger.debug("parse_skip_no_text")
         return None
 
     # Check mention / reply-to-bot
     mentioned_jids: list[str] = []
     reply_to_id: str | None = None
+    ctx = None
 
     if data.message and data.message.extended_text_message:
         ctx = data.message.extended_text_message.context_info
         if ctx:
             mentioned_jids = ctx.mentioned_jid
             reply_to_id = ctx.stanza_id
+        logger.debug(
+            "parse_extended_text",
+            has_context=ctx is not None,
+            mentioned_jids=mentioned_jids,
+            ctx_participant=ctx.participant if ctx else None,
+        )
 
     is_mention = bot_jid in mentioned_jids
     is_reply_to_bot = (
