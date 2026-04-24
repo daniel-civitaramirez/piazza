@@ -5,6 +5,7 @@ from __future__ import annotations
 import structlog
 from pydantic import ValidationError
 
+from piazza.config.settings import settings
 from piazza.messaging.whatsapp.schemas import (
     Message,
     WebhookPayload,
@@ -141,10 +142,9 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
     )
 
     # Bot may be identified by phone JID or LID — check both
-    from piazza.config.settings import settings as _settings
     bot_identifiers = {bot_jid}
-    if _settings.bot_lid:
-        bot_identifiers.add(_settings.bot_lid)
+    if settings.bot_lid:
+        bot_identifiers.add(settings.bot_lid)
 
     is_mention = bool(bot_identifiers & set(mentioned_jids))
     is_reply_to_bot = (
