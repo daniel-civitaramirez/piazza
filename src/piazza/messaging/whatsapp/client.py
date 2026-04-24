@@ -86,13 +86,13 @@ async def send_typing(group_jid: str) -> None:
     """Send typing indicator (composing presence) to a WhatsApp group."""
     client = _get_client()
     url = _url("chat/sendPresence")
-    payload = {"number": group_jid, "options": {"presence": "composing", "delay": 1200}}
+    payload = {"number": group_jid, "presence": "composing", "delay": 1200}
 
     try:
         resp = await client.post(url, json=payload, headers=_headers())
         resp.raise_for_status()
-    except httpx.HTTPError:
-        logger.exception("whatsapp_send_typing_failed")
+    except httpx.HTTPError as exc:
+        logger.warning("whatsapp_send_typing_failed", error=str(exc))
 
 
 async def close() -> None:
