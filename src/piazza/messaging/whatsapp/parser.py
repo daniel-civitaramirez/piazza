@@ -86,8 +86,8 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
     """
     try:
         payload = WebhookPayload(**raw)
-    except ValidationError:
-        logger.warning("webhook_parse_error", raw_keys=list(raw.keys()))
+    except ValidationError as e:
+        logger.warning("webhook_parse_error", raw_keys=list(raw.keys()), error=str(e))
         return None
 
     data = payload.data
@@ -95,15 +95,18 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
 
     # Reject bot's own messages
     if key.from_me:
+        logger.debug("parse_skip_from_me")
         return None
 
     # Only process group messages
     if not key.remote_jid.endswith("@g.us"):
+        logger.debug("parse_skip_not_group", remote_jid=key.remote_jid)
         return None
 
     # Extract text from either message shape
     text = _extract_text(data)
     if not text:
+        logger.debug("parse_skip_no_text", message_keys=list(data.message.__dict__.keys()) if data.message else [])
         return None
 
     # Check mention / reply-to-bot
@@ -123,7 +126,17 @@ def parse_webhook(raw: dict, bot_jid: str) -> Message | None:
         and ctx.participant == bot_jid
     )
 
+    logger.debug(
+        "parse_mention_check",
+        bot_jid=bot_jid,
+        mentioned_jids=mentioned_jids,
+        is_mention=is_mention,
+        is_reply_to_bot=is_reply_to_bot,
+        text_preview=text[:50] if text else None,
+    )
+
     if not is_mention and not is_reply_to_bot:
+        logger.debug("parse_skip_no_mention")
         return None
 
     # Determine sender JID — in groups, participant holds the sender
