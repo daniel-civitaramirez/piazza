@@ -13,19 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from piazza.core.exceptions import NotFoundError, ReminderError
 from piazza.db.models.group import Group
 from piazza.db.models.reminder import Reminder
-from piazza.db.repositories import note as note_repo
 from piazza.db.repositories import reminder as reminder_repo
 
 logger = structlog.get_logger()
-
-
-# ---------- Private helpers ----------
-
-
-def _build_reminder_note(message: str, trigger_at: datetime) -> str:
-    """Build a readable knowledge-base note from a reminder."""
-    time_str = trigger_at.strftime("%Y-%m-%d %H:%M UTC")
-    return f"{message} — {time_str}"
 
 
 # ---------- Pure functions ----------
@@ -83,13 +73,6 @@ async def set_reminder(
     trigger_at = parse_time(datetime_raw, tz)
     reminder = await reminder_repo.create_reminder(
         session, group_id, created_by, message, trigger_at
-    )
-
-    # Auto-note for knowledge base
-    note_content = _build_reminder_note(message, trigger_at)
-    await note_repo.create_note(
-        session, group_id, created_by,
-        content=note_content, tag=message,
     )
 
     await session.commit()

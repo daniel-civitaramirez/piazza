@@ -101,6 +101,7 @@ class Entity:
     ITINERARY_ITEM = "itinerary_item"
     CHECKLIST_ITEM = "checklist_item"
     CHECKLIST_ITEMS = "checklist_items"
+    GROUP_DATA = "group_data"
 
 
 # ---------- Response builders ----------

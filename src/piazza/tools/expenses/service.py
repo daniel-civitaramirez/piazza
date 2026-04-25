@@ -10,34 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from piazza.core.exceptions import ExpenseError, NotFoundError
 from piazza.db.models.expense import Expense
 from piazza.db.repositories import expense as expense_repo
-from piazza.db.repositories import note as note_repo
 from piazza.db.repositories.member import get_all_members
 
 # ---------- Private helpers ----------
-
-
-def _build_expense_note(
-    description: str | None,
-    amount_cents: int,
-    currency: str,
-    payer_name: str,
-    participant_names: list[str],
-) -> str:
-    """Build a readable knowledge-base note from an expense."""
-    amount = f"{amount_cents / 100:.2f} {currency}"
-    names = ", ".join(participant_names)
-    return f"{description} \u2014 {amount}, {payer_name}, {names}"
-
-
-def _build_settlement_note(
-    payer_name: str,
-    payee_name: str,
-    amount_cents: int,
-    currency: str,
-) -> str:
-    """Build a readable knowledge-base note from a settlement."""
-    amount = f"{amount_cents / 100:.2f} {currency}"
-    return f"{payer_name} → {payee_name} {amount}"
 
 
 def _member_map(members: list) -> dict[uuid.UUID, str]:
@@ -213,17 +188,6 @@ async def add_expense(
     members = await get_all_members(session, group_id)
     mmap = _member_map(members)
 
-    # Auto-note for knowledge base
-    participant_names = [mmap[mid] for mid, _ in shares]
-    note_content = _build_expense_note(
-        description, amount_cents, currency,
-        mmap[payer_id], participant_names,
-    )
-    await note_repo.create_note(
-        session, group_id, payer_id,
-        content=note_content, tag=description,
-    )
-
     await session.commit()
 
     return ExpenseResult(
@@ -268,13 +232,6 @@ async def record_settlement(
     mmap = _member_map(members)
     payer_name = mmap[payer_id]
     payee_name = mmap[payee_id]
-
-    # Auto-note for knowledge base
-    note_content = _build_settlement_note(payer_name, payee_name, amount_cents, currency)
-    await note_repo.create_note(
-        session, group_id, payer_id,
-        content=note_content, tag="settlement",
-    )
 
     await session.commit()
 

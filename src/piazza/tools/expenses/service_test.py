@@ -7,11 +7,8 @@ import uuid
 import pytest
 
 from piazza.core.exceptions import ExpenseError, NotFoundError
-from piazza.db.repositories import note as note_repo
 from piazza.tools.expenses import service
 from piazza.tools.expenses.service import (
-    _build_expense_note,
-    _build_settlement_note,
     calculate_balances,
     calculate_even_split,
     simplify_debts,
@@ -155,26 +152,6 @@ class TestExpenseServiceDB:
         result = await service.list_expenses(db_session, sample_group.group_id)
         assert len(result) == 1
         assert result[0].description == "taxi"
-
-    @pytest.mark.asyncio
-    async def test_add_expense_creates_auto_note(self, db_session, sample_group):
-        """Logging an expense creates a companion note in the knowledge base."""
-        await service.add_expense(
-            db_session,
-            sample_group.group_id,
-            sample_group.alice.id,
-            5000, "EUR", "dinner",
-            _shares_for_even(
-                [sample_group.alice.id, sample_group.bob.id],
-                5000,
-            ),
-        )
-        notes = await note_repo.find_notes(db_session, sample_group.group_id, "dinner")
-        assert len(notes) == 1
-        assert "dinner" in notes[0].content
-        assert "50.00 EUR" in notes[0].content
-        assert "Alice" in notes[0].content
-        assert notes[0].tag == "dinner"
 
     @pytest.mark.asyncio
     async def test_add_expense_returns_result(self, db_session, sample_group):
@@ -324,51 +301,3 @@ class TestRecordSettlement:
         )
         assert result.settled_up is True
 
-    @pytest.mark.asyncio
-    async def test_settlement_creates_auto_note(self, db_session, sample_group):
-        """Recording a settlement creates a companion note in the knowledge base."""
-        await service.add_expense(
-            db_session,
-            sample_group.group_id,
-            sample_group.alice.id,
-            2000, "EUR", "lunch",
-            _shares_for_even(
-                [sample_group.alice.id, sample_group.bob.id],
-                2000,
-            ),
-        )
-        await service.record_settlement(
-            db_session,
-            sample_group.group_id,
-            payer_id=sample_group.bob.id,
-            payee_id=sample_group.alice.id,
-            amount_cents=1000,
-            currency="EUR",
-        )
-        notes = await note_repo.find_notes(
-            db_session, sample_group.group_id, "settlement"
-        )
-        assert len(notes) >= 1
-        settlement_note = next(n for n in notes if n.tag == "settlement")
-        assert "Bob" in settlement_note.content
-        assert "Alice" in settlement_note.content
-        assert "10.00 EUR" in settlement_note.content
-
-
-class TestAutoNoteHelpers:
-    def test_build_expense_note(self):
-        result = _build_expense_note("lunch", 5000, "EUR", "Alice", ["Alice", "Bob"])
-        assert "lunch" in result
-        assert "50.00 EUR" in result
-        assert "Alice" in result
-        assert "Bob" in result
-
-    def test_build_expense_note_no_description(self):
-        result = _build_expense_note(None, 1000, "USD", "Alice", ["Alice"])
-        assert "10.00 USD" in result
-
-    def test_build_settlement_note(self):
-        result = _build_settlement_note("Bob", "Alice", 2500, "EUR")
-        assert "Bob" in result
-        assert "Alice" in result
-        assert "25.00 EUR" in result
