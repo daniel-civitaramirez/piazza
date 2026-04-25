@@ -56,6 +56,103 @@ def _stub_externals():
         yield
 
 
+class TestTypingIndicator:
+    """Typing indicator loops until processing completes, then is cancelled."""
+
+    @pytest.mark.asyncio
+    async def test_typing_called_continuously_during_processing(
+        self, redis_client, _stub_externals
+    ):
+        """send_typing is called more than once when processing takes > 1s."""
+        from piazza.workers.jobs import process_message_job
+
+        typing_calls = 0
+        original_send_typing = AsyncMock()
+
+        async def count_typing(*args, **kwargs):
+            nonlocal typing_calls
+            typing_calls += 1
+            return await original_send_typing(*args, **kwargs)
+
+        async def slow_process(msg, session, redis):
+            await asyncio.sleep(2.5)
+            return "done"
+
+        ctx = {"redis": redis_client}
+        with (
+            patch(
+                "piazza.messaging.whatsapp.client.send_typing", side_effect=count_typing
+            ),
+            patch("piazza.workers.process_message.process_message", side_effect=slow_process),
+        ):
+            result = await process_message_job(ctx, _raw_message())
+
+        assert result == "done"
+        assert typing_calls >= 2, f"Expected multiple typing calls, got {typing_calls}"
+
+    @pytest.mark.asyncio
+    async def test_typing_cancelled_after_processing(
+        self, redis_client, _stub_externals
+    ):
+        """The typing task is no longer running after the job completes."""
+        from piazza.workers.jobs import process_message_job
+
+        async def fast_process(msg, session, redis):
+            return "fast"
+
+        ctx = {"redis": redis_client}
+        with patch("piazza.workers.process_message.process_message", side_effect=fast_process):
+            result = await process_message_job(ctx, _raw_message())
+
+        assert result == "fast"
+        # Give the event loop a tick to clean up cancelled tasks
+        await asyncio.sleep(0.05)
+        for task in asyncio.all_tasks():
+            assert "_keep_typing" not in str(task.get_coro()), "Typing task should be cancelled"
+
+    @pytest.mark.asyncio
+    async def test_typing_cancelled_on_error(self, redis_client, _stub_externals):
+        """The typing task is cancelled even when processing raises."""
+        from piazza.workers.jobs import process_message_job
+
+        async def exploding_process(msg, session, redis):
+            raise RuntimeError("boom")
+
+        ctx = {"redis": redis_client}
+        with patch(
+            "piazza.workers.process_message.process_message", side_effect=exploding_process
+        ):
+            result = await process_message_job(ctx, _raw_message())
+
+        assert result == GENERIC_ERROR_RESPONSE
+        await asyncio.sleep(0.05)
+        for task in asyncio.all_tasks():
+            assert "_keep_typing" not in str(task.get_coro()), "Typing task should be cancelled"
+
+    @pytest.mark.asyncio
+    async def test_typing_failure_does_not_block_processing(
+        self, redis_client, _stub_externals
+    ):
+        """If send_typing raises, processing still completes normally."""
+        from piazza.workers.jobs import process_message_job
+
+        async def fast_process(msg, session, redis):
+            return "still works"
+
+        ctx = {"redis": redis_client}
+        with (
+            patch(
+                "piazza.messaging.whatsapp.client.send_typing",
+                new_callable=AsyncMock,
+                side_effect=Exception("evolution API down"),
+            ),
+            patch("piazza.workers.process_message.process_message", side_effect=fast_process),
+        ):
+            result = await process_message_job(ctx, _raw_message())
+
+        assert result == "still works"
+
+
 class TestLockReleasedOnFailure:
     """Lock must be released after every failure mode so the next message proceeds."""
 
