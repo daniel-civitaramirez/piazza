@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import structlog
@@ -51,66 +52,73 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     redis = ctx.get("redis")
     logger.info("job_started")
 
-    # Send typing indicator before processing (best-effort)
-    await client.send_typing(message.group_jid)
+    async def _keep_typing() -> None:
+        while True:
+            await client.send_typing(message.group_jid)
+            await asyncio.sleep(1.0)
 
-    # Per-group rate limiting
-    if redis and settings.group_rate_limit_per_minute > 0:
-        rate_key = f"rate:group:{message.group_jid}"
-        now = time.time()
-        pipe = redis.pipeline()
-        pipe.zadd(rate_key, {str(now): now})
-        pipe.zremrangebyscore(rate_key, "-inf", now - 60)
-        pipe.zcard(rate_key)
-        pipe.expire(rate_key, 60)
-        results = await pipe.execute()
-        if results[2] > settings.group_rate_limit_per_minute:
-            logger.warning("group_rate_limited", count=results[2])
-            try:
-                await client.send_text(message.group_jid, RATE_LIMITED_RESPONSE)
-            except WhatsAppSendError:
-                pass
-            return RATE_LIMITED_RESPONSE
+    typing_task = asyncio.create_task(_keep_typing())
 
-    # Serialize processing per group to prevent race conditions
-    lock = (
-        redis.lock(f"lock:group:{message.group_jid}", timeout=settings.group_lock_timeout)
-        if redis else None
-    )
     try:
-        if lock:
-            acquired = await lock.acquire(blocking_timeout=settings.group_lock_wait)
-            if not acquired:
-                logger.warning("group_lock_timeout")
-                response = GENERIC_ERROR_RESPONSE
+        # Per-group rate limiting
+        if redis and settings.group_rate_limit_per_minute > 0:
+            rate_key = f"rate:group:{message.group_jid}"
+            now = time.time()
+            pipe = redis.pipeline()
+            pipe.zadd(rate_key, {str(now): now})
+            pipe.zremrangebyscore(rate_key, "-inf", now - 60)
+            pipe.zcard(rate_key)
+            pipe.expire(rate_key, 60)
+            results = await pipe.execute()
+            if results[2] > settings.group_rate_limit_per_minute:
+                logger.warning("group_rate_limited", count=results[2])
+                try:
+                    await client.send_text(message.group_jid, RATE_LIMITED_RESPONSE)
+                except WhatsAppSendError:
+                    pass
+                return RATE_LIMITED_RESPONSE
+
+        # Serialize processing per group to prevent race conditions
+        lock = (
+            redis.lock(f"lock:group:{message.group_jid}", timeout=settings.group_lock_timeout)
+            if redis else None
+        )
+        try:
+            if lock:
+                acquired = await lock.acquire(blocking_timeout=settings.group_lock_wait)
+                if not acquired:
+                    logger.warning("group_lock_timeout")
+                    response = GENERIC_ERROR_RESPONSE
+                else:
+                    async with AsyncSessionFactory() as session:
+                        response = await process_message(message, session, redis)
             else:
                 async with AsyncSessionFactory() as session:
                     response = await process_message(message, session, redis)
-        else:
-            async with AsyncSessionFactory() as session:
-                response = await process_message(message, session, redis)
-    except Exception:
-        logger.exception("process_message_job_error")
-        response = GENERIC_ERROR_RESPONSE
-    finally:
-        try:
-            if lock and await lock.owned():
-                await lock.release()
         except Exception:
-            logger.warning("group_lock_release_failed")
+            logger.exception("process_message_job_error")
+            response = GENERIC_ERROR_RESPONSE
+        finally:
+            try:
+                if lock and await lock.owned():
+                    await lock.release()
+            except Exception:
+                logger.warning("group_lock_release_failed")
 
-    logger.info("job_response_ready")
+        logger.info("job_response_ready")
 
-    # Attempt delivery; if send_text raises after retries, log it
-    wa_message_id: str | None = None
-    try:
-        wa_message_id = await client.send_text(message.group_jid, response)
-        logger.info("job_response_sent", wa_message_id=wa_message_id)
-    except WhatsAppSendError:
-        logger.error(
-            "message_delivery_failed",
-            response_length=len(response),
-        )
+        # Attempt delivery; if send_text raises after retries, log it
+        wa_message_id: str | None = None
+        try:
+            wa_message_id = await client.send_text(message.group_jid, response)
+            logger.info("job_response_sent", wa_message_id=wa_message_id)
+        except WhatsAppSendError:
+            logger.error(
+                "message_delivery_failed",
+                response_length=len(response),
+            )
+    finally:
+        typing_task.cancel()
 
     # Log both user message and bot response to message_log (best-effort)
     try:
