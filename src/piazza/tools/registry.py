@@ -215,7 +215,7 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "set_reminder",
-        "description": "Set a reminder for the group.",
+        "description": "Set a one-time or recurring reminder for the group.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -226,12 +226,24 @@ AGENT_TOOLS: list[dict] = [
                 "datetime_raw": {
                     "type": "string",
                     "description": (
-                        "When, in natural language"
-                        " (e.g. 'tomorrow 6am', 'every Monday 9am')"
+                        "When the first/next reminder fires, in natural language"
+                        " (e.g. 'tomorrow 6am', 'in 2 hours')."
+                        " Optional when recurrence is provided — the next"
+                        " occurrence will be derived from the rule."
+                    ),
+                },
+                "recurrence": {
+                    "type": "string",
+                    "description": (
+                        "Optional iCalendar RRULE for repeating reminders."
+                        " Examples: 'FREQ=DAILY;BYHOUR=10;BYMINUTE=0' (daily at 10:00),"
+                        " 'FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0' (every Monday 9am),"
+                        " 'FREQ=MONTHLY;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0' (1st of every month 9am)."
+                        " Omit for one-time reminders."
                     ),
                 },
             },
-            "required": ["description", "datetime_raw"],
+            "required": ["description"],
         },
     },
     {

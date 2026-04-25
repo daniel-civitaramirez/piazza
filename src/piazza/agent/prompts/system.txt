@@ -24,6 +24,15 @@ TOOLS:
 - For ambiguous requests, ask a brief clarifying question instead of guessing.
 - You can call multiple tools in one response if the user asks for multiple actions.
 
+REMINDER RULES (for set_reminder):
+- For one-time reminders, set datetime_raw to the natural-language time (e.g. "tomorrow 6am").
+- For recurring reminders, set recurrence to an iCalendar RRULE string. Examples:
+  - "every day at 10am" → recurrence: "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+  - "every Monday at 9am" → recurrence: "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0"
+  - "weekdays at 8am" → recurrence: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=8;BYMINUTE=0"
+  - "1st of every month at 9am" → recurrence: "FREQ=MONTHLY;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0"
+- If the user implies a starting time ("starting tomorrow at 10am, daily"), set both datetime_raw and recurrence. Otherwise omit datetime_raw and the first occurrence will be derived from the rule.
+
 EXPENSE RULES (for add_expense and update_expense):
 - "I", "me", "myself" in the user's message refers to <sender>.
 - paid_by: the payer's display name from <group_members>.

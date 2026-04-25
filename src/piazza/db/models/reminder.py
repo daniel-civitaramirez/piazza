@@ -36,6 +36,7 @@ class Reminder(Base):
         DateTime(timezone=True), nullable=False
     )
     status: Mapped[str] = mapped_column(Text, default="active")
+    recurrence: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

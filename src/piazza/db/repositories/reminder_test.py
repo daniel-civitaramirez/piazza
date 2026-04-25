@@ -116,6 +116,30 @@ class TestCancelReminder:
         assert result is None
 
 
+class TestRecurrenceColumn:
+    @pytest.mark.asyncio
+    async def test_round_trip(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        created = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "take pills", trigger, recurrence=rule,
+        )
+        assert created.recurrence == rule
+
+        active = await get_active_reminders(db_session, sample_group.group_id)
+        assert active[0].recurrence == rule
+
+    @pytest.mark.asyncio
+    async def test_default_none(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        reminder = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "one-time", trigger,
+        )
+        assert reminder.recurrence is None
+
+
 class TestSnoozeReminder:
     @pytest.mark.asyncio
     async def test_updates_trigger_at(self, db_session, sample_group):
