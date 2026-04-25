@@ -1,8 +1,7 @@
-"""Re-own the reminders.recurrence column for the recurring-reminder feature.
+"""Add reminders.recurrence column for the recurring-reminder feature.
 
-The column was created in 001_initial_schema but never used. This migration
-drops it and re-adds it so the recurrence feature has a single, traceable
-origin in migration history.
+The column was originally created in 001 as a stub, then dropped (unused)
+in 007. This migration re-adds it for the recurring-reminder (RRULE) feature.
 
 Revision ID: 012
 Revises: 011
@@ -20,7 +19,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.drop_column("reminders", "recurrence")
     op.add_column(
         "reminders",
         sa.Column("recurrence", sa.Text(), nullable=True),
@@ -29,7 +27,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("reminders", "recurrence")
-    op.add_column(
-        "reminders",
-        sa.Column("recurrence", sa.Text(), nullable=True),
-    )
