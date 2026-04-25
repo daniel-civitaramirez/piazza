@@ -10,6 +10,9 @@ from piazza.core.exceptions import NotFoundError, ReminderError
 from piazza.db.repositories import reminder as queries
 from piazza.tools.reminders import service
 from piazza.tools.reminders.service import (
+    _validate_rrule,
+    next_occurrence,
+    occurrences_between,
     parse_snooze_duration,
     parse_time,
 )
@@ -123,6 +126,111 @@ class TestSetReminder:
 
 
 
+class TestRecurringReminder:
+    def test_validate_rrule_accepts_daily(self):
+        _validate_rrule("FREQ=DAILY;BYHOUR=10;BYMINUTE=0")
+
+    def test_validate_rrule_accepts_weekly(self):
+        _validate_rrule("FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0")
+
+    def test_validate_rrule_rejects_garbage(self):
+        with pytest.raises(ReminderError, match="recurrence rule"):
+            _validate_rrule("not a rule")
+
+    def test_next_occurrence_daily(self):
+        now = datetime(2026, 4, 25, 8, 0, tzinfo=timezone.utc)
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        nxt = next_occurrence(rule, now)
+        assert nxt == datetime(2026, 4, 25, 10, 0, tzinfo=timezone.utc)
+
+    def test_next_occurrence_after_today_rolls_to_tomorrow(self):
+        now = datetime(2026, 4, 25, 11, 0, tzinfo=timezone.utc)
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        nxt = next_occurrence(rule, now)
+        assert nxt == datetime(2026, 4, 26, 10, 0, tzinfo=timezone.utc)
+
+    def test_next_occurrence_honors_group_tz(self):
+        # 10:00 America/New_York on 2026-04-25 == 14:00 UTC (EDT, UTC-4).
+        now = datetime(2026, 4, 25, 8, 0, tzinfo=timezone.utc)
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        nxt = next_occurrence(rule, now, tz="America/New_York")
+        assert nxt == datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_recurrence_uses_group_tz(self, db_session, sample_group):
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        reminder = await service.set_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "take pills", datetime_raw=None, tz="America/New_York", recurrence=rule,
+        )
+        # First fire should be at 10:00 local, which is 14:00 or 15:00 UTC depending on DST.
+        assert reminder.trigger_at.hour in (14, 15)
+        assert reminder.trigger_at.minute == 0
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_with_recurrence_and_no_datetime(self, db_session, sample_group):
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        reminder = await service.set_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "take pills", datetime_raw=None, tz="UTC", recurrence=rule,
+        )
+        assert reminder.recurrence == rule
+        assert reminder.trigger_at.hour == 10
+        assert reminder.trigger_at.minute == 0
+        assert reminder.trigger_at > datetime.now(timezone.utc)
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_with_explicit_datetime_and_recurrence(
+        self, db_session, sample_group
+    ):
+        rule = "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0"
+        reminder = await service.set_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "standup", datetime_raw="tomorrow 9am", tz="UTC", recurrence=rule,
+        )
+        assert reminder.recurrence == rule
+        assert reminder.trigger_at is not None
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_invalid_rrule_raises(self, db_session, sample_group):
+        with pytest.raises(ReminderError):
+            await service.set_reminder(
+                db_session, sample_group.group_id, sample_group.alice.id,
+                "x", datetime_raw=None, tz="UTC", recurrence="garbage",
+            )
+
+    def test_occurrences_between_excludes_aligned_start(self):
+        """An aligned `start` (i.e. equal to a rule occurrence) must NOT appear in the list.
+
+        Regression: at the original `inc=True`, the worker counted the
+        already-due `trigger_at` itself as a backfill occurrence, producing
+        a duplicate fire on every recurring reminder.
+        """
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        # `start` is exactly an occurrence (10:00 UTC on the dot).
+        start = datetime(2026, 4, 25, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 4, 25, 11, 0, tzinfo=timezone.utc)
+        assert occurrences_between(rule, start, end) == []
+
+    def test_occurrences_between_includes_intermediate(self):
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        start = datetime(2026, 4, 25, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 4, 27, 11, 0, tzinfo=timezone.utc)
+        # Aligned start excluded; next two daily occurrences included.
+        assert occurrences_between(rule, start, end) == [
+            datetime(2026, 4, 26, 10, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 27, 10, 0, tzinfo=timezone.utc),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_no_time_no_recurrence_raises(self, db_session, sample_group):
+        with pytest.raises(ReminderError):
+            await service.set_reminder(
+                db_session, sample_group.group_id, sample_group.alice.id,
+                "x", datetime_raw=None, tz="UTC", recurrence=None,
+            )
+
+
 class TestReminderService:
     @pytest.mark.asyncio
     async def test_list_no_reminders(self, db_session, sample_group):
@@ -223,3 +331,97 @@ class TestFireReminders:
 
         payloads = await fire_reminders(db_session)
         assert len(payloads) == 0
+
+    @pytest.mark.asyncio
+    async def test_one_time_due_marked_fired(self, db_session, sample_group):
+        """One-time due reminder is marked fired and disappears from active list."""
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "one-time", past,
+        )
+        await db_session.flush()
+
+        await fire_reminders(db_session)
+        active = await queries.get_active_reminders(db_session, sample_group.group_id)
+        assert active == []
+
+    @pytest.mark.asyncio
+    async def test_recurring_due_advances_trigger(self, db_session, sample_group):
+        """Recurring due reminder fires once and is rescheduled to next occurrence."""
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "take pills", past, recurrence=rule,
+        )
+        await db_session.flush()
+
+        payloads = await fire_reminders(db_session)
+        assert len(payloads) == 1
+
+        active = await queries.get_active_reminders(db_session, sample_group.group_id)
+        assert len(active) == 1
+        assert active[0].status == "active"
+        assert active[0].recurrence == rule
+        # SQLite drops tz-info; normalize for comparison.
+        new_trigger = active[0].trigger_at
+        if new_trigger.tzinfo is None:
+            new_trigger = new_trigger.replace(tzinfo=timezone.utc)
+        assert new_trigger > past
+
+    @pytest.mark.asyncio
+    async def test_recurring_backfills_missed_occurrences(self, db_session, sample_group):
+        """A daily reminder scheduled 3 days ago fires once for each missed day."""
+        three_days_ago = datetime.now(timezone.utc) - timedelta(days=3, minutes=5)
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "take pills", three_days_ago, recurrence=rule,
+        )
+        await db_session.flush()
+
+        payloads = await fire_reminders(db_session)
+        # Originally-scheduled fire + ~3 missed daily occurrences.
+        assert len(payloads) >= 3
+
+        active = await queries.get_active_reminders(db_session, sample_group.group_id)
+        assert len(active) == 1
+        new_trigger = active[0].trigger_at
+        if new_trigger.tzinfo is None:
+            new_trigger = new_trigger.replace(tzinfo=timezone.utc)
+        assert new_trigger > datetime.now(timezone.utc)
+
+
+    @pytest.mark.asyncio
+    async def test_recurring_aligned_trigger_no_duplicate(self, db_session, sample_group):
+        """Regression: an aligned trigger_at must not produce a duplicate fire.
+
+        Recurring reminders' rescheduled trigger_at is always rule-aligned
+        (computed via next_occurrence). On the next firing pass,
+        occurrences_between(rule, trigger_at, now) must NOT count
+        trigger_at itself, otherwise the user gets two ⏰ messages.
+        """
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        # Pick an aligned past trigger: yesterday at 10:00 UTC.
+        now = datetime.now(timezone.utc)
+        aligned_past = (now - timedelta(days=1)).replace(
+            hour=10, minute=0, second=0, microsecond=0
+        )
+        # Ensure it's strictly in the past (in case it's before 10:00 today).
+        if aligned_past >= now:
+            aligned_past -= timedelta(days=1)
+
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "take pills", aligned_past, recurrence=rule,
+        )
+        await db_session.flush()
+
+        payloads = await fire_reminders(db_session)
+        # 1 for the aligned past trigger, plus any later real occurrences
+        # that have also passed by `now`. With inc=False those later
+        # occurrences are counted exactly once each.
+        today_10 = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        expected_extra = 1 if today_10 <= now else 0
+        assert len(payloads) == 1 + expected_extra

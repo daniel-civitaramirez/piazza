@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 import uuid
+import zoneinfo
 from datetime import datetime, timedelta, timezone
 
 import dateparser
 import structlog
+from dateutil.rrule import rrulestr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.core.exceptions import NotFoundError, ReminderError
@@ -16,6 +18,58 @@ from piazza.db.models.reminder import Reminder
 from piazza.db.repositories import reminder as reminder_repo
 
 logger = structlog.get_logger()
+
+
+# ---------- Private helpers ----------
+
+
+def _resolve_tz(tz: str) -> zoneinfo.ZoneInfo:
+    try:
+        return zoneinfo.ZoneInfo(tz)
+    except (KeyError, zoneinfo.ZoneInfoNotFoundError):
+        return zoneinfo.ZoneInfo("UTC")
+
+
+def _validate_rrule(rule: str, tz: str = "UTC") -> None:
+    """Validate an iCalendar RRULE string. Raises ReminderError if invalid."""
+    try:
+        rrulestr(rule, dtstart=datetime.now(_resolve_tz(tz)))
+    except (ValueError, TypeError) as exc:
+        raise ReminderError(
+            f"Couldn't understand the recurrence rule: _{rule}_."
+        ) from exc
+
+
+def next_occurrence(rule: str, after: datetime, tz: str = "UTC") -> datetime | None:
+    """Return the next occurrence of the rule strictly after `after`, or None if exhausted.
+
+    BYHOUR/BYMINUTE in the rule are interpreted in `tz`. The returned datetime
+    is normalized to UTC for storage.
+    """
+    zone = _resolve_tz(tz)
+    local_after = after.astimezone(zone) if after.tzinfo else after.replace(tzinfo=zone)
+    nxt = rrulestr(rule, dtstart=local_after).after(local_after, inc=False)
+    if nxt is None:
+        return None
+    if nxt.tzinfo is None:
+        nxt = nxt.replace(tzinfo=zone)
+    return nxt.astimezone(timezone.utc)
+
+
+def occurrences_between(
+    rule: str, start: datetime, end: datetime, tz: str = "UTC"
+) -> list[datetime]:
+    """Return rule occurrences strictly after `start` and at-or-before `end`, in UTC."""
+    zone = _resolve_tz(tz)
+    local_start = start.astimezone(zone) if start.tzinfo else start.replace(tzinfo=zone)
+    local_end = end.astimezone(zone) if end.tzinfo else end.replace(tzinfo=zone)
+    rule_set = rrulestr(rule, dtstart=local_start)
+    out: list[datetime] = []
+    for occ in rule_set.between(local_start, local_end, inc=False):
+        if occ.tzinfo is None:
+            occ = occ.replace(tzinfo=zone)
+        out.append(occ.astimezone(timezone.utc))
+    return out
 
 
 # ---------- Pure functions ----------
@@ -66,13 +120,35 @@ async def set_reminder(
     group_id: uuid.UUID,
     created_by: uuid.UUID,
     message: str,
-    datetime_raw: str,
+    datetime_raw: str | None,
     tz: str = "UTC",
+    recurrence: str | None = None,
 ) -> Reminder:
-    """Parse time, create reminder, return the Reminder model."""
-    trigger_at = parse_time(datetime_raw, tz)
+    """Parse time, create reminder, return the Reminder model.
+
+    For recurring reminders, `datetime_raw` is optional — if omitted, the first
+    fire time is derived from the RRULE.
+    """
+    if recurrence:
+        _validate_rrule(recurrence, tz)
+
+    if datetime_raw:
+        trigger_at = parse_time(datetime_raw, tz)
+    elif recurrence:
+        next_at = next_occurrence(recurrence, datetime.now(timezone.utc), tz)
+        if next_at is None:
+            raise ReminderError(
+                f"Recurrence rule has no future occurrences: _{recurrence}_."
+            )
+        trigger_at = next_at
+    else:
+        raise ReminderError(
+            "A reminder needs either a time or a recurrence rule."
+        )
+
     reminder = await reminder_repo.create_reminder(
-        session, group_id, created_by, message, trigger_at
+        session, group_id, created_by, message, trigger_at,
+        recurrence=recurrence,
     )
 
     await session.commit()

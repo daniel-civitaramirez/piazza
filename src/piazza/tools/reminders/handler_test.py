@@ -11,6 +11,66 @@ from piazza.tools.reminders import handler
 from piazza.tools.schemas import Entities
 
 
+class TestHandleReminderSet:
+    @pytest.mark.asyncio
+    async def test_recurring_only(self, db_session, sample_group):
+        """Setting a recurring reminder with only a recurrence rule succeeds."""
+        entities = Entities(
+            description="take pills",
+            recurrence="FREQ=DAILY;BYHOUR=10;BYMINUTE=0",
+        )
+        result = await handler.handle_reminder_set(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ok"
+        assert result["action"] == "set_reminder"
+        assert result["recurrence"] == "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+        assert "trigger_at" in result
+
+    @pytest.mark.asyncio
+    async def test_one_time(self, db_session, sample_group):
+        entities = Entities(description="dentist", datetime_raw="in 2 hours")
+        result = await handler.handle_reminder_set(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ok"
+        assert "recurrence" not in result
+
+    @pytest.mark.asyncio
+    async def test_missing_both_time_and_recurrence(self, db_session, sample_group):
+        entities = Entities(description="x")
+        result = await handler.handle_reminder_set(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_time"
+
+    @pytest.mark.asyncio
+    async def test_invalid_rrule_returns_error(self, db_session, sample_group):
+        entities = Entities(description="x", recurrence="garbage")
+        result = await handler.handle_reminder_set(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "unparseable_time"
+
+    @pytest.mark.asyncio
+    async def test_list_includes_recurrence(self, db_session, sample_group):
+        entities = Entities(
+            description="take pills",
+            recurrence="FREQ=DAILY;BYHOUR=10;BYMINUTE=0",
+        )
+        await handler.handle_reminder_set(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+
+        listing = await handler.handle_reminder_list(
+            db_session, sample_group.group_id, sample_group.alice.id, Entities()
+        )
+        assert listing["status"] == "list"
+        assert listing["reminders"][0]["recurrence"] == "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+
+
 class TestHandleReminderCancel:
     @pytest.mark.asyncio
     async def test_cancel_by_number(self, db_session, sample_group):

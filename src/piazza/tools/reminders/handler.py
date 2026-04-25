@@ -37,6 +37,8 @@ def _reminder_to_dict(reminder: Reminder, number: int | None = None) -> dict:
         "message": reminder.message,
         "trigger_at": reminder.trigger_at.isoformat(),
     }
+    if reminder.recurrence:
+        d["recurrence"] = reminder.recurrence
     if number is not None:
         d["number"] = number
     return d
@@ -67,7 +69,7 @@ async def handle_reminder_set(
     """Set a new reminder."""
     if not entities.description:
         return error_response(Reason.MISSING_DESCRIPTION, entity=Entity.REMINDER)
-    if not entities.datetime_raw:
+    if not entities.datetime_raw and not entities.recurrence:
         return error_response(Reason.MISSING_TIME)
 
     tz = await _get_group_tz(session, group_id)
@@ -75,15 +77,21 @@ async def handle_reminder_set(
         reminder = await service.set_reminder(
             session, group_id, sender_id,
             entities.description, entities.datetime_raw, tz,
+            recurrence=entities.recurrence,
         )
     except ReminderError:
-        return error_response(Reason.UNPARSEABLE_TIME, raw=entities.datetime_raw)
+        return error_response(
+            Reason.UNPARSEABLE_TIME,
+            raw=entities.datetime_raw or entities.recurrence or "",
+        )
 
-    return ok_response(
-        Action.SET_REMINDER,
-        message=reminder.message,
-        trigger_at=reminder.trigger_at.isoformat(),
-    )
+    payload: dict = {
+        "message": reminder.message,
+        "trigger_at": reminder.trigger_at.isoformat(),
+    }
+    if reminder.recurrence:
+        payload["recurrence"] = reminder.recurrence
+    return ok_response(Action.SET_REMINDER, **payload)
 
 
 async def handle_reminder_list(

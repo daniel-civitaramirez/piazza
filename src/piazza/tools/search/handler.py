@@ -27,10 +27,13 @@ def _expense_summary(expense) -> dict:
 
 
 def _reminder_summary(reminder) -> dict:
-    return {
+    d: dict = {
         "message": reminder.message,
         "trigger_at": reminder.trigger_at.isoformat(),
     }
+    if reminder.recurrence:
+        d["recurrence"] = reminder.recurrence
+    return d
 
 
 def _itinerary_summary(item) -> dict:

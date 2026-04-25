@@ -12,6 +12,7 @@ class Entities(BaseModel):
     paid_by: str | None = None
     participants: list[str | dict] | None = None
     datetime_raw: str | None = None
+    recurrence: str | None = None
     tag: str | None = None
     items: list[dict] | None = None
     item_number: int | None = None

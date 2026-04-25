@@ -16,6 +16,7 @@ dependencies = [
     "structlog>=24.4",
     "anthropic>=0.42",
     "dateparser>=1.2",
+    "python-dateutil>=2.9",
     "cryptography>=44.0",
     "llm-guard>=0.3",
     "sentry-sdk[fastapi]>=2.19",
