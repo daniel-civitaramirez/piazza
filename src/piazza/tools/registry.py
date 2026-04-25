@@ -50,6 +50,7 @@ from piazza.tools.reminders.handler import (
 )
 from piazza.tools.responses import Reason, error_response
 from piazza.tools.schemas import Entities
+from piazza.tools.search.handler import handle_search_group
 from piazza.tools.status.status import handle_status
 
 logger = structlog.get_logger()
@@ -519,6 +520,23 @@ AGENT_TOOLS: list[dict] = [
         "description": "Show group statistics (expense count, active reminders, etc.).",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "search_group",
+        "description": (
+            "Search across all group data — expenses, reminders, itinerary,"
+            " checklists, and notes. Returns matching items grouped by type."
+            " Omit description to get an overview of everything the group has saved."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Search keywords. Omit to list all items from every domain.",
+                },
+            },
+        },
+    },
 ]
 
 # --- Tool registry: maps tool names to handler functions ---
@@ -548,6 +566,7 @@ TOOL_REGISTRY: dict[str, HandlerFunc] = {
     "delete_item": handle_item_delete,
     "set_timezone": handle_set_timezone,
     "get_status": handle_status,
+    "search_group": handle_search_group,
 }
 
 

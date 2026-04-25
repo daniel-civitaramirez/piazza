@@ -7,11 +7,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from piazza.core.exceptions import NotFoundError, ReminderError
-from piazza.db.repositories import note as note_repo
 from piazza.db.repositories import reminder as queries
 from piazza.tools.reminders import service
 from piazza.tools.reminders.service import (
-    _build_reminder_note,
     _validate_rrule,
     next_occurrence,
     occurrences_between,
@@ -126,24 +124,6 @@ class TestSetReminder:
         assert reminder.message == "pack for trip"
         assert reminder.trigger_at is not None
 
-    @pytest.mark.asyncio
-    async def test_set_reminder_creates_auto_note(self, db_session, sample_group):
-        """Setting a reminder creates a companion note in the knowledge base."""
-        await service.set_reminder(
-            db_session,
-            sample_group.group_id,
-            sample_group.alice.id,
-            "pack for trip",
-            "in 2 hours",
-            tz="UTC",
-        )
-
-        notes = await note_repo.find_notes(
-            db_session, sample_group.group_id, "pack for trip"
-        )
-        assert len(notes) == 1
-        assert "pack for trip" in notes[0].content
-        assert notes[0].tag == "pack for trip"
 
 
 class TestRecurringReminder:
@@ -445,11 +425,3 @@ class TestFireReminders:
         today_10 = now.replace(hour=10, minute=0, second=0, microsecond=0)
         expected_extra = 1 if today_10 <= now else 0
         assert len(payloads) == 1 + expected_extra
-
-
-class TestAutoNoteHelper:
-    def test_build_reminder_note(self):
-        trigger = datetime(2026, 3, 15, 6, 0, tzinfo=timezone.utc)
-        result = _build_reminder_note("pack for trip", trigger)
-        assert "pack for trip" in result
-        assert "2026-03-15 06:00 UTC" in result

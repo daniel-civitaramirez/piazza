@@ -48,17 +48,6 @@ class TestAddFromItems:
         assert result[0].title == "Beach day"
         assert result[0].start_at is None
 
-    @pytest.mark.asyncio
-    async def test_add_creates_knowledge_base_note(self, db_session, sample_group):
-        from piazza.db.repositories import note as note_repo
-
-        await add_from_items(
-            db_session, sample_group.group_id, sample_group.alice.id,
-            [{"title": "Flight BA247", "item_type": "flight"}],
-        )
-        notes = await note_repo.find_notes(db_session, sample_group.group_id, "Flight BA247")
-        assert len(notes) >= 1
-
 
 # ---------- Item creation (DB) ----------
 

@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from piazza.core.exceptions import NotFoundError
 from piazza.db.models.itinerary import ItineraryItem
 from piazza.db.repositories import itinerary as itinerary_repo
-from piazza.db.repositories import note as note_repo
 
 logger = structlog.get_logger()
+
 
 def _parse_iso(value: str | None) -> datetime | None:
     """Parse an ISO datetime string, returning None on failure."""
@@ -23,21 +23,6 @@ def _parse_iso(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except (ValueError, TypeError):
         return None
-
-
-def _build_note_from_itinerary(item: ItineraryItem) -> str:
-    """Build a readable note summary from an itinerary item."""
-    parts = [item.title]
-    if item.start_at:
-        time_str = item.start_at.strftime("%b %d, %H:%M")
-        if item.end_at:
-            time_str += f"\u2013{item.end_at.strftime('%H:%M')}"
-        parts.append(time_str)
-    if item.location:
-        parts.append(item.location)
-    if item.notes:
-        parts.append(item.notes)
-    return " \u2014 ".join(parts)
 
 
 async def add_from_items(
@@ -63,13 +48,6 @@ async def add_from_items(
             notes=raw.get("notes"),
         )
         items.append(item)
-
-        # Auto-populate knowledge base with itinerary item
-        note_content = _build_note_from_itinerary(item)
-        await note_repo.create_note(
-            session, group_id, sender_id,
-            content=note_content, tag=item.title,
-        )
 
     await session.commit()
     return items
