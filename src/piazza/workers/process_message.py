@@ -18,7 +18,7 @@ from piazza.core.exceptions import (
     FLAGGED_RESPONSE,
     GENERIC_ERROR_RESPONSE,
     UNAPPROVED_GROUP_RESPONSE,
-    WELCOME_MESSAGE,
+    WELCOME_MESSAGE_RESPONSE,
     WhatsAppSendError,
 )
 from piazza.db.models.group import Group
@@ -94,7 +94,7 @@ async def _maybe_send_welcome(session: AsyncSession, group: Group) -> None:
     if group.welcome_sent:
         return
     try:
-        wa_message_id = await wa_client.send_text(group.wa_jid, WELCOME_MESSAGE)
+        wa_message_id = await wa_client.send_text(group.wa_jid, WELCOME_MESSAGE_RESPONSE)
     except WhatsAppSendError:
         logger.warning("welcome_send_failed", group_id=str(group.id))
         return
@@ -103,7 +103,7 @@ async def _maybe_send_welcome(session: AsyncSession, group: Group) -> None:
             session,
             group_id=group.id,
             role="assistant",
-            content=WELCOME_MESSAGE,
+            content=WELCOME_MESSAGE_RESPONSE,
             wa_message_id=wa_message_id,
         )
     except Exception:

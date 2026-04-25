@@ -6,7 +6,14 @@ class PiazzaError(Exception):
 
 
 # Shared user-facing error response strings
-GENERIC_ERROR_RESPONSE = "Something went wrong. Please try again."
+UNAUTHORIZED_DIRECT_MESSAGE_REPSONSE = (
+    "\U0001f916Unauthorized\U0001f916 \n\n"
+    "I am a group producitivyt assisant and only work in group chats.\n\n"
+    "Add me to a group and await for approval from the admin."
+)
+GENERIC_ERROR_RESPONSE = (
+ "Something went wrong. Please try again."
+)
 FLAGGED_RESPONSE = (
     "Your message was flagged for safety reasons. "
     "Please try rephrasing your request."
@@ -19,7 +26,7 @@ RATE_LIMITED_RESPONSE = (
     "This group is sending too many requests. "
     "Please wait a moment and try again."
 )
-WELCOME_MESSAGE = (
+WELCOME_MESSAGE_RESPONSE = (
     "Hi! I'm Piazza, a productivity assistant for this group.\n\n"
     "*What I can help with:*\n"
     "- *Expenses*: log expenses, split bills, check balances, settle up\n"

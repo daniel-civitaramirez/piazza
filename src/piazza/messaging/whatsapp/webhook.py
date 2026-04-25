@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, Header, Request, Response
 
 from piazza.config.settings import settings
-from piazza.core.exceptions import GENERIC_ERROR_RESPONSE
+from piazza.core.exceptions import GENERIC_ERROR_RESPONSE, UNAUTHORIZED_DIRECT_MESSAGE_REPSONSE
 from piazza.messaging.whatsapp.group_sync import (
     handle_group_participants_update,
     handle_group_upsert,
@@ -26,6 +26,16 @@ def verify_hmac(body: bytes, signature: str, secret: str) -> bool:
     """Verify HMAC-SHA256 signature from Evolution API."""
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
+
+
+async def _send_unauthorized_dm(remote_jid: str) -> None:
+    """Fire-and-forget reply to direct (non-group) messages."""
+    from piazza.messaging.whatsapp import client
+
+    try:
+        await client.send_text(remote_jid, UNAUTHORIZED_DIRECT_MESSAGE_REPSONSE)
+    except Exception:
+        logger.exception("unauthorized_dm_send_failed")
 
 
 async def _fallback_process(raw_message: dict) -> None:
@@ -76,6 +86,13 @@ async def webhook(
     event = raw.get("event", "")
 
     if event == "messages.upsert":
+        # Direct (non-group) messages → fire-and-forget "Unauthorized" reply
+        key = raw.get("data", {}).get("key", {}) or {}
+        remote_jid = key.get("remoteJid", "") or ""
+        if not key.get("fromMe") and remote_jid.endswith("@s.whatsapp.net"):
+            background_tasks.add_task(_send_unauthorized_dm, remote_jid)
+            return Response(status_code=200)
+
         # Learn display name from every group message (lightweight, before mention gate)
         sender_info = extract_sender_info(raw, settings.bot_jid)
         if sender_info:
