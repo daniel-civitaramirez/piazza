@@ -34,7 +34,7 @@ def build_user_content(context: AgentContext) -> str:
 
     now = datetime.now(ZoneInfo(context.tz))
     parts.append(
-        f"<current_time>{now.strftime('%A, %Y-%m-%d %H:%M %Z')}</current_time>"
+        f"<current_time>{now.strftime('%A, %-d %B %Y %H:%M:%S')}</current_time>"
     )
 
     parts.append(f"<sender>{context.sender_name}</sender>")
