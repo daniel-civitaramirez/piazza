@@ -108,7 +108,7 @@ services:
       - ./config/injection_patterns.json:/app/config/injection_patterns.json:ro
       - hf_cache:/hf_cache
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\").status == 200 else 1)' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
