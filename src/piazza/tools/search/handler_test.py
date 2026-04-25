@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+from datetime import datetime, timedelta, timezone
+
 from piazza.db.repositories import checklist as checklist_repo
 from piazza.db.repositories import expense as expense_repo
 from piazza.db.repositories import note as note_repo
+from piazza.db.repositories import reminder as reminder_repo
 from piazza.tools.schemas import Entities
 from piazza.tools.search.handler import handle_search_group
 
@@ -93,6 +96,26 @@ class TestListMode:
         )
         assert result["status"] == "empty"
         assert result["entity"] == "group_data"
+
+    @pytest.mark.asyncio
+    async def test_reminder_summary_includes_recurrence(self, db_session, sample_group):
+        gid = sample_group.group_id
+        alice = sample_group.alice
+        rule = "FREQ=DAILY;BYHOUR=10;BYMINUTE=0"
+
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        await reminder_repo.create_reminder(
+            db_session, gid, alice.id, "take pills", future, recurrence=rule,
+        )
+        await reminder_repo.create_reminder(
+            db_session, gid, alice.id, "one-time", future,
+        )
+        await db_session.commit()
+
+        result = await handle_search_group(db_session, gid, alice.id, Entities())
+        reminders = {r["message"]: r for r in result["reminders"]}
+        assert reminders["take pills"]["recurrence"] == rule
+        assert "recurrence" not in reminders["one-time"]
 
     @pytest.mark.asyncio
     async def test_expense_summary_fields(self, db_session, sample_group):
