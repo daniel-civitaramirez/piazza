@@ -186,6 +186,7 @@ async def process_message(
             session=session,
             group_id=group.id,
             member_id=member.id,
+            tz=group.timezone,
             reply_to_id=message.reply_to_message_id,
         )
 

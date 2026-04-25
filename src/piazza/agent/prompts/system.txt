@@ -11,6 +11,7 @@ STYLE:
 LANGUAGE: Always respond in the same language the user's message is written in.
 
 CONTEXT:
+- <current_time> is the current date/time in the group's timezone. Use it to resolve relative dates like "today", "this Thursday", or "next Monday".
 - <sender> is the person messaging you.
 - <group_members> lists all active group members.
 - <recent_context> shows recent messages (if available).

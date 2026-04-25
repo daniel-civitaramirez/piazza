@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,7 @@ class AgentContext:
     session: AsyncSession
     group_id: uuid.UUID
     member_id: uuid.UUID
+    tz: str = "UTC"
     reply_to_id: str | None = None
     recent_messages: list[MessageLog] = field(default_factory=list)
     reply_context: MessageLog | None = None
@@ -28,6 +31,11 @@ class AgentContext:
 def build_user_content(context: AgentContext) -> str:
     """Build the user message content with context tags for the agent LLM."""
     parts: list[str] = []
+
+    now = datetime.now(ZoneInfo(context.tz))
+    parts.append(
+        f"<current_time>{now.strftime('%A, %Y-%m-%d %H:%M %Z')}</current_time>"
+    )
 
     parts.append(f"<sender>{context.sender_name}</sender>")
     if context.member_names:
