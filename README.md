@@ -97,3 +97,5 @@ Alpha. Running in a single production deployment. Not yet packaged for multi-ten
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE). Source-available, free for non-commercial use (learning, evaluation, personal projects). Commercial use requires written permission from the author.
+
+For commercial licensing, contact: dani.civitaramirez@gmail.com
