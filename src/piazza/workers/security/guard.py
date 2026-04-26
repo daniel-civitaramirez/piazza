@@ -43,7 +43,7 @@ _HEURISTIC_SIGNALS: list[tuple[str, float]] = [
     ("forget your", 0.20),
 ]
 
-_HEURISTIC_THRESHOLD = 0.85
+_HEURISTIC_THRESHOLD = 0.95
 
 
 def _heuristic_score(text: str) -> float:
