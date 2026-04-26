@@ -38,11 +38,6 @@ def _group_member_names(members: list) -> list[str]:
 
 
 def _to_cents(amount: float | int | str) -> int:
-    """Convert a major-unit amount to integer cents using banker-safe rounding.
-
-    Avoids IEEE-754 drift that would otherwise spuriously trip the
-    "participants exceed total" guard for inputs like 0.1 + 0.2.
-    """
     try:
         return int(
             (Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
@@ -52,11 +47,6 @@ def _to_cents(amount: float | int | str) -> int:
 
 
 def _extract_name(entry: str | dict) -> str:
-    """Pull the member name out of a participant entry.
-
-    The settle tool schema declares string participants, but the LLM
-    occasionally drifts to the dict shape used by add/update. Tolerate both.
-    """
     if isinstance(entry, dict):
         name = entry.get("name", "")
         return name if isinstance(name, str) else ""
@@ -136,8 +126,6 @@ async def _resolve_shares(
             failed.append(name)
             continue
 
-        # Fold an explicit payer entry into the residual instead of
-        # double-counting (P2-1). The payer's share is recomputed below.
         if member.id == payer_id:
             continue
 
@@ -153,7 +141,6 @@ async def _resolve_shares(
             group_members=_group_member_names(active_members),
         )
 
-    # Compute payer share
     participant_total = sum(cents for _, cents in resolved)
     payer_share = amount_cents - participant_total
     if payer_share < 0:
@@ -212,12 +199,7 @@ async def handle_expense_add(
 async def handle_expense_balance(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> dict:
-    """Show who owes what.
-
-    Default view returns debts grouped by currency. When the user supplies
-    a currency, also return a single-currency consolidated view at today's
-    live FX rate.
-    """
+    """Show who owes what."""
     convert_to: str | None = None
     if entities.currency:
         try:
@@ -233,7 +215,6 @@ async def handle_expense_balance(
             fx=get_fx_provider() if convert_to else None,
         )
     except FxUnavailableError:
-        # Fall back to the per-currency view so the user still gets data.
         result = await service.get_balances(session, group_id)
         return ok_response(
             Action.GET_BALANCES,
@@ -336,7 +317,6 @@ async def handle_expense_update(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> dict:
     """Update an existing expense."""
-    # Resolve target expense
     try:
         if entities.item_number is not None:
             expense = await service.resolve_expense_by_number(
@@ -365,7 +345,6 @@ async def handle_expense_update(
         except InvalidCurrencyError:
             return error_response(Reason.INVALID_CURRENCY, currency=entities.currency)
 
-    # Resolve new payer if provided
     new_payer_id = None
     if entities.paid_by:
         result = await _resolve_payer(session, group_id, sender_id, entities.paid_by)
@@ -373,7 +352,6 @@ async def handle_expense_update(
             return result
         new_payer_id = result
 
-    # Resolve new shares if provided
     new_shares = None
     if entities.participants is not None:
         anchor_id = new_payer_id or expense.payer_id

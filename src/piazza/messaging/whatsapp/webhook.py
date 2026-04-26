@@ -10,12 +10,16 @@ from fastapi import APIRouter, BackgroundTasks, Header, Request, Response
 
 from piazza.config.settings import settings
 from piazza.core.exceptions import GENERIC_ERROR_RESPONSE, UNAUTHORIZED_DIRECT_MESSAGE_REPSONSE
+from piazza.db import engine as db_engine
+from piazza.messaging.whatsapp import client
 from piazza.messaging.whatsapp.group_sync import (
     handle_group_participants_update,
     handle_group_upsert,
     learn_display_name,
 )
 from piazza.messaging.whatsapp.parser import extract_sender_info, parse_webhook
+from piazza.messaging.whatsapp.schemas import Message
+from piazza.workers import process_message as process_message_module
 
 logger = structlog.get_logger()
 
@@ -30,8 +34,6 @@ def verify_hmac(body: bytes, signature: str, secret: str) -> bool:
 
 async def _send_unauthorized_dm(remote_jid: str) -> None:
     """Fire-and-forget reply to direct (non-group) messages."""
-    from piazza.messaging.whatsapp import client
-
     try:
         await client.send_text(remote_jid, UNAUTHORIZED_DIRECT_MESSAGE_REPSONSE)
     except Exception:
@@ -40,16 +42,13 @@ async def _send_unauthorized_dm(remote_jid: str) -> None:
 
 async def _fallback_process(raw_message: dict) -> None:
     """Process a message in-process when arq is unavailable (degraded mode)."""
-    from piazza.db.engine import AsyncSessionFactory
-    from piazza.messaging.whatsapp import client
-    from piazza.messaging.whatsapp.schemas import Message
-    from piazza.workers.process_message import process_message
-
     message = Message(**raw_message)
     try:
         await client.send_typing(message.group_jid)
-        async with AsyncSessionFactory() as session:
-            response = await process_message(message, session, redis=None)
+        async with db_engine.AsyncSessionFactory() as session:
+            response = await process_message_module.process_message(
+                message, session, redis=None
+            )
     except Exception:
         logger.exception("fallback_process_error")
         response = GENERIC_ERROR_RESPONSE

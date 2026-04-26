@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from urllib.parse import urlparse
 
 import structlog
 from arq import cron
@@ -11,17 +12,21 @@ from arq.connections import RedisSettings
 
 from piazza.config.settings import settings
 from piazza.core.exceptions import GENERIC_ERROR_RESPONSE, RATE_LIMITED_RESPONSE, WhatsAppSendError
+from piazza.core.fx import FxProvider, init_fx_provider
+from piazza.db import engine as db_engine
+from piazza.db.repositories import message_log as message_log_repo
+from piazza.db.repositories.group import get_or_create_group
+from piazza.db.repositories.member import get_or_create_member
+from piazza.messaging.whatsapp import client
+from piazza.messaging.whatsapp.schemas import Message
+from piazza.tools.reminders.tasks import fire_reminders
+from piazza.workers import process_message as process_message_module
 
 logger = structlog.get_logger()
 
 
-# ---------- Helpers ----------
-
-
 def redis_settings() -> RedisSettings:
     """Build arq RedisSettings from app settings."""
-    from urllib.parse import urlparse
-
     parsed = urlparse(settings.redis_url)
     return RedisSettings(
         host=parsed.hostname or "localhost",
@@ -30,7 +35,15 @@ def redis_settings() -> RedisSettings:
     )
 
 
-# ---------- Job functions ----------
+async def _on_startup(ctx: dict) -> None:
+    init_fx_provider(
+        FxProvider(
+            api_key=settings.openexchangerates_key,
+            redis=ctx.get("redis"),
+            cache_ttl_seconds=settings.fx_cache_ttl_seconds,
+        )
+    )
+    logger.info("worker_fx_provider_initialized", configured=bool(settings.openexchangerates_key))
 
 
 async def process_message_job(ctx: dict, raw_message: dict) -> str:
@@ -40,14 +53,6 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     and logs both the inbound message and bot response to message_log.
     Guarantees a response is attempted even when the pipeline fails.
     """
-    from piazza.db.engine import AsyncSessionFactory
-    from piazza.db.repositories import message_log as message_log_repo
-    from piazza.db.repositories.group import get_or_create_group
-    from piazza.db.repositories.member import get_or_create_member
-    from piazza.messaging.whatsapp import client
-    from piazza.messaging.whatsapp.schemas import Message
-    from piazza.workers.process_message import process_message
-
     message = Message(**raw_message)
     redis = ctx.get("redis")
     logger.info("job_started")
@@ -60,7 +65,6 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     typing_task = asyncio.create_task(_keep_typing())
 
     try:
-        # Per-group rate limiting
         if redis and settings.group_rate_limit_per_minute > 0:
             rate_key = f"rate:group:{message.group_jid}"
             now = time.time()
@@ -78,7 +82,6 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
                     pass
                 return RATE_LIMITED_RESPONSE
 
-        # Serialize processing per group to prevent race conditions
         lock = (
             redis.lock(f"lock:group:{message.group_jid}", timeout=settings.group_lock_timeout)
             if redis else None
@@ -90,11 +93,15 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
                     logger.warning("group_lock_timeout")
                     response = GENERIC_ERROR_RESPONSE
                 else:
-                    async with AsyncSessionFactory() as session:
-                        response = await process_message(message, session, redis)
+                    async with db_engine.AsyncSessionFactory() as session:
+                        response = await process_message_module.process_message(
+                            message, session, redis
+                        )
             else:
-                async with AsyncSessionFactory() as session:
-                    response = await process_message(message, session, redis)
+                async with db_engine.AsyncSessionFactory() as session:
+                    response = await process_message_module.process_message(
+                        message, session, redis
+                    )
         except Exception:
             logger.exception("process_message_job_error")
             response = GENERIC_ERROR_RESPONSE
@@ -107,7 +114,6 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
 
         logger.info("job_response_ready")
 
-        # Attempt delivery; if send_text raises after retries, log it
         wa_message_id: str | None = None
         try:
             wa_message_id = await client.send_text(message.group_jid, response)
@@ -120,9 +126,8 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     finally:
         typing_task.cancel()
 
-    # Log both user message and bot response to message_log (best-effort)
     try:
-        async with AsyncSessionFactory() as session:
+        async with db_engine.AsyncSessionFactory() as session:
             group, _ = await get_or_create_group(session, message.group_jid)
             member = await get_or_create_member(
                 session, group.id, message.sender_jid, message.sender_name
@@ -143,8 +148,6 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
                 content=response,
                 wa_message_id=wa_message_id,
             )
-            # Prune old messages beyond retention window (min 2x context to avoid
-            # races with concurrent hydration)
             multiplier = max(settings.message_log_retention_multiplier, 2)
             keep = settings.conversation_context_limit * multiplier
             await message_log_repo.delete_old_entries(session, group.id, keep)
@@ -158,12 +161,8 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
 
 async def fire_reminders_job(ctx: dict) -> int:
     """arq cron job to fire due reminders."""
-    from piazza.db.engine import AsyncSessionFactory
-    from piazza.messaging.whatsapp import client
-    from piazza.tools.reminders.tasks import fire_reminders
-
     try:
-        async with AsyncSessionFactory() as session:
+        async with db_engine.AsyncSessionFactory() as session:
             payloads = await fire_reminders(session)
     except Exception:
         logger.exception("fire_reminders_db_error")
@@ -180,29 +179,12 @@ async def fire_reminders_job(ctx: dict) -> int:
     return sent
 
 
-# ---------- Worker configuration ----------
-
-
-async def _on_startup(ctx: dict) -> None:
-    """Wire process-wide singletons that handlers depend on."""
-    from piazza.core.fx import FxProvider, init_fx_provider
-
-    init_fx_provider(
-        FxProvider(
-            api_key=settings.openexchangerates_key,
-            redis=ctx.get("redis"),
-            cache_ttl_seconds=settings.fx_cache_ttl_seconds,
-        )
-    )
-    logger.info("worker_fx_provider_initialized", configured=bool(settings.openexchangerates_key))
-
-
 class WorkerSettings:
     functions = [process_message_job]
     redis_settings = redis_settings()
     max_jobs = settings.worker_max_jobs
     job_timeout = settings.worker_job_timeout
-    retry_jobs = False  # Handlers have DB side effects; retry in-job instead
+    retry_jobs = False
     max_tries = 1
     on_startup = _on_startup
 

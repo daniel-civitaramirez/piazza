@@ -1,5 +1,7 @@
 """Application settings loaded from environment variables."""
 
+import base64
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
@@ -93,8 +95,6 @@ class Settings(BaseSettings):
     @property
     def encryption_key_bytes(self) -> bytes:
         """Return the encryption key decoded from base64."""
-        import base64
-
         return base64.b64decode(self.encryption_key)
 
     @property
