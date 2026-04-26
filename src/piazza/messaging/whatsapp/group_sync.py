@@ -63,11 +63,17 @@ async def handle_group_upsert(raw: dict) -> None:
                     data.subject, settings.encryption_key_bytes
                 )
 
+            bot_ids = {settings.bot_jid, settings.bot_lid} - {""}
             synced = 0
             for participant in data.participants:
                 # Evolution API v2 uses LID format for id; phoneNumber has the real JID
                 jid = participant.phone_number or participant.id
-                if jid and jid.endswith("@s.whatsapp.net"):
+                if (
+                    jid
+                    and jid.endswith("@s.whatsapp.net")
+                    and jid not in bot_ids
+                    and participant.id not in bot_ids
+                ):
                     await get_or_create_member_by_jid(session, group.id, jid)
                     synced += 1
 
@@ -122,9 +128,14 @@ async def handle_group_participants_update(raw: dict) -> None:
             for pd in data.participants_data:
                 name_map[pd.jid] = pd.push_name
 
+            bot_ids = {settings.bot_jid, settings.bot_lid} - {""}
             if data.action == "add":
                 for jid in data.participants:
-                    if jid and jid.endswith("@s.whatsapp.net"):
+                    if (
+                        jid
+                        and jid.endswith("@s.whatsapp.net")
+                        and jid not in bot_ids
+                    ):
                         await get_or_create_member_by_jid(
                             session,
                             group.id,

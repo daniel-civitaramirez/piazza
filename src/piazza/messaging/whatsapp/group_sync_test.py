@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from piazza.config.settings import settings
 from piazza.conftest import TEST_ENCRYPTION_KEY
 from piazza.core.encryption import decrypt
 from piazza.db.models.group import Group
@@ -17,6 +18,16 @@ from piazza.messaging.whatsapp.group_sync import (
     handle_group_upsert,
     learn_display_name,
 )
+
+
+BOT_JID = "5500000000000@s.whatsapp.net"
+BOT_LID = "0:abcdefbot@lid"
+
+
+@pytest.fixture
+def configured_bot_ids(monkeypatch):
+    monkeypatch.setattr(settings, "bot_jid", BOT_JID)
+    monkeypatch.setattr(settings, "bot_lid", BOT_LID)
 
 
 @pytest.fixture
@@ -91,6 +102,70 @@ class TestHandleGroupUpsert:
     async def test_malformed_data_no_crash(self, db_session, patch_session):
         raw = {"data": {}}
         await handle_group_upsert(raw)  # should not raise
+
+
+class TestHandleGroupUpsertBotFilter:
+    """Bot must never be inserted as a Member when added to a group."""
+
+    @pytest.mark.asyncio
+    async def test_skips_bot_jid_in_phone_number(
+        self, db_session, patch_session, configured_bot_ids
+    ):
+        raw = {
+            "data": {
+                "id": "120363099@g.us",
+                "participants": [
+                    {"id": "0:abc@lid", "phoneNumber": BOT_JID},
+                    {"id": "0:xyz@lid", "phoneNumber": "5511111111111@s.whatsapp.net"},
+                ],
+            }
+        }
+        await handle_group_upsert(raw)
+
+        members = (await db_session.execute(select(Member))).scalars().all()
+        assert len(members) == 1
+        assert decrypt(members[0].wa_id_encrypted, TEST_ENCRYPTION_KEY) == "5511111111111@s.whatsapp.net"
+
+    @pytest.mark.asyncio
+    async def test_skips_bot_lid_when_phone_number_missing(
+        self, db_session, patch_session, configured_bot_ids
+    ):
+        # Even if Evolution API only returns the LID and no phoneNumber,
+        # the bot must still not be inserted.
+        raw = {
+            "data": {
+                "id": "120363099@g.us",
+                "participants": [
+                    {"id": BOT_LID, "phoneNumber": None},
+                    {"id": "0:xyz@lid", "phoneNumber": "5511111111111@s.whatsapp.net"},
+                ],
+            }
+        }
+        await handle_group_upsert(raw)
+
+        members = (await db_session.execute(select(Member))).scalars().all()
+        assert len(members) == 1
+
+
+class TestHandleGroupParticipantsUpdateBotFilter:
+    @pytest.mark.asyncio
+    async def test_add_skips_bot_jid(
+        self, db_session, sample_group, patch_session, configured_bot_ids
+    ):
+        raw = {
+            "data": {
+                "groupJid": "120363001@g.us",
+                "action": "add",
+                "participants": [BOT_JID, "5544444444444@s.whatsapp.net"],
+                "participantsData": [],
+            }
+        }
+        await handle_group_participants_update(raw)
+
+        members = (await db_session.execute(select(Member))).scalars().all()
+        jids = {decrypt(m.wa_id_encrypted, TEST_ENCRYPTION_KEY) for m in members}
+        assert BOT_JID not in jids
+        assert "5544444444444@s.whatsapp.net" in jids
 
 
 class TestHandleGroupParticipantsUpdate:

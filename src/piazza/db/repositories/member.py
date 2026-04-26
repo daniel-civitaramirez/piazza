@@ -110,16 +110,23 @@ async def get_or_create_member_by_jid(
     return member
 
 
+def _bot_hash() -> str | None:
+    """Hash of the bot's own JID, or None if unconfigured."""
+    return hash_phone(settings.bot_jid) if settings.bot_jid else None
+
+
 async def get_all_members(
     session: AsyncSession, group_id: uuid.UUID
 ) -> list[Member]:
-    """Get all members of a group (including inactive).
+    """Get all members of a group (including inactive), excluding the bot itself.
 
     Used for balance calculations where inactive members still owe/are owed.
     """
-    result = await session.execute(
-        select(Member).where(Member.group_id == group_id)
-    )
+    stmt = select(Member).where(Member.group_id == group_id)
+    bot_hash = _bot_hash()
+    if bot_hash is not None:
+        stmt = stmt.where(Member.wa_id_hash != bot_hash)
+    result = await session.execute(stmt)
     members = list(result.scalars().all())
     key = _key()
     for m in members:
@@ -130,16 +137,19 @@ async def get_all_members(
 async def get_active_members(
     session: AsyncSession, group_id: uuid.UUID
 ) -> list[Member]:
-    """Get active members of a group.
+    """Get active members of a group, excluding the bot itself.
 
-    Used for LLM context injection and 'everyone' expense expansion.
+    Used for LLM context injection and 'everyone' expense expansion. The
+    bot is never a participant.
     """
-    result = await session.execute(
-        select(Member).where(
-            Member.group_id == group_id,
-            Member.is_active == True,  # noqa: E712
-        )
+    stmt = select(Member).where(
+        Member.group_id == group_id,
+        Member.is_active == True,  # noqa: E712
     )
+    bot_hash = _bot_hash()
+    if bot_hash is not None:
+        stmt = stmt.where(Member.wa_id_hash != bot_hash)
+    result = await session.execute(stmt)
     members = list(result.scalars().all())
     key = _key()
     for m in members:
@@ -170,10 +180,16 @@ async def deactivate_member(
 async def _get_member_by_name(
     session: AsyncSession, group_id: uuid.UUID, display_name: str
 ) -> Member | None:
-    """Resolve a member by display name (case-insensitive exact match)."""
-    result = await session.execute(
-        select(Member).where(Member.group_id == group_id)
-    )
+    """Resolve a member by display name (case-insensitive exact match).
+
+    Excludes the bot's own member row so a stale or learned bot display
+    name can never resolve to the bot itself.
+    """
+    stmt = select(Member).where(Member.group_id == group_id)
+    bot_hash = _bot_hash()
+    if bot_hash is not None:
+        stmt = stmt.where(Member.wa_id_hash != bot_hash)
+    result = await session.execute(stmt)
     members = list(result.scalars().all())
     key = _key()
     for m in members:
