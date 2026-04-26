@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 import piazza.db.models  # noqa: F401  -- registers all models with Base.metadata
 from piazza.config.settings import settings
 from piazza.core.encryption import encrypt, hash_phone
+from piazza.core.fx import set_fx_provider
 from piazza.db.base import Base
 from piazza.db.models.group import Group
 from piazza.db.models.member import Member
@@ -38,6 +39,14 @@ TEST_ENCRYPTION_KEY_B64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 def _set_encryption_key(monkeypatch):
     """Ensure encryption_key is always set in tests."""
     monkeypatch.setattr(settings, "encryption_key", TEST_ENCRYPTION_KEY_B64)
+
+
+@pytest.fixture(autouse=True)
+def _reset_fx_provider():
+    """Reset the module-level FX provider so test order can't leak state."""
+    set_fx_provider(None)
+    yield
+    set_fx_provider(None)
 
 
 @pytest_asyncio.fixture

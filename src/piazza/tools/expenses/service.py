@@ -22,20 +22,21 @@ def _member_map(members: list) -> dict[uuid.UUID, str]:
 
 
 def _rescale_shares(
-    expense: Expense, new_total_cents: int
+    expense: Expense, old_total_cents: int, new_total_cents: int
 ) -> list[tuple[uuid.UUID, int]]:
     """Proportionally rescale existing participant shares to a new total.
 
     The remainder is absorbed into the largest share so the result still
-    sums exactly to `new_total_cents`.
+    sums exactly to `new_total_cents`. Caller must pass `old_total_cents`
+    explicitly because `expense.amount_cents` may already have been
+    mutated by the time we rescale.
     """
-    old_total = expense.amount_cents
-    if old_total <= 0:
+    if old_total_cents <= 0:
         return [(p.member_id, new_total_cents) for p in (expense.participants or [])][:1]
 
     rescaled: list[tuple[uuid.UUID, int]] = []
     for p in expense.participants or []:
-        share = (p.share_cents * new_total_cents) // old_total
+        share = (p.share_cents * new_total_cents) // old_total_cents
         rescaled.append((p.member_id, share))
 
     drift = new_total_cents - sum(s for _, s in rescaled)
@@ -430,12 +431,13 @@ async def update_expense(
         if new_amount_cents is None and new_currency != expense.currency:
             if fx is None:
                 raise ExpenseError("FX provider required to convert currency")
+            old_amount_cents = expense.amount_cents
             converted_cents, _ = await fx.convert(
-                expense.amount_cents, expense.currency, new_currency
+                old_amount_cents, expense.currency, new_currency
             )
             changes.append({
                 "field": "amount",
-                "old_cents": expense.amount_cents,
+                "old_cents": old_amount_cents,
                 "new_cents": converted_cents,
                 "converted_from": expense.currency,
             })
@@ -443,7 +445,7 @@ async def update_expense(
             await expense_repo.replace_expense_participants(
                 session,
                 expense.id,
-                _rescale_shares(expense, converted_cents),
+                _rescale_shares(expense, old_amount_cents, converted_cents),
             )
         changes.append({"field": "currency", "old": expense.currency, "new": new_currency})
         expense.currency = new_currency

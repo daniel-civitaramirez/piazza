@@ -6,8 +6,10 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from piazza.core.exceptions import ExpenseError, NotFoundError
+from piazza.db.models.expense import ExpenseParticipant
 from piazza.tools.expenses import service
 from piazza.tools.expenses.service import (
     calculate_balances,
@@ -296,6 +298,22 @@ class TestUpdateExpenseCurrencyConversion:
         assert updated.currency == "USD"
         assert updated.amount_cents == 11000
         assert any(c["field"] == "amount" and c.get("converted_from") == "EUR" for c in changes)
+        # Regression: shares must rescale to the new total, not be reused verbatim.
+        # 5000 EUR share * (11000 / 10000) = 5500 USD; sum of shares == new total.
+        # Read shares directly from the DB to bypass the SQLAlchemy identity map
+        # (conftest uses expire_on_commit=False, so cached collections persist).
+        rows = (await db_session.execute(
+            select(ExpenseParticipant.share_cents)
+            .where(ExpenseParticipant.expense_id == updated.id)
+        )).scalars().all()
+        share_total = sum(rows)
+        assert share_total == 11000, (
+            f"shares must sum to new total; got {share_total}, expected 11000"
+        )
+        for share in rows:
+            assert share == 5500, (
+                f"each share should be 5500 USD (5000 EUR * 1.10), got {share}"
+            )
 
     @pytest.mark.asyncio
     async def test_currency_only_change_without_fx_raises(self, db_session, sample_group):

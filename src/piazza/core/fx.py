@@ -133,9 +133,15 @@ _provider: FxProvider | None = None
 
 
 def init_fx_provider(provider: FxProvider) -> None:
-    """Install the process-wide FX provider. Called from app startup."""
+    """Install the process-wide FX provider. First caller wins.
+
+    Idempotent so single-process dev runs (where main.lifespan and the arq
+    worker startup both fire) do not clobber each other. Tests should use
+    `set_fx_provider` to replace.
+    """
     global _provider
-    _provider = provider
+    if _provider is None:
+        _provider = provider
 
 
 def set_fx_provider(provider: FxProvider | None) -> None:

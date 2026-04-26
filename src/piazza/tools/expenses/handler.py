@@ -214,7 +214,7 @@ async def handle_expense_balance(
             convert_to=convert_to,
             fx=get_fx_provider() if convert_to else None,
         )
-    except FxUnavailableError:
+    except FxUnavailableError as exc:
         result = await service.get_balances(session, group_id)
         return ok_response(
             Action.GET_BALANCES,
@@ -222,6 +222,7 @@ async def handle_expense_balance(
             converted=None,
             fx_unavailable=True,
             requested_currency=convert_to,
+            fx_error=str(exc),
         )
 
     return ok_response(
