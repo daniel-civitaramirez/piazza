@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 import pytest
 
@@ -199,6 +200,48 @@ class TestExpenseServiceDB:
         assert "Alice" in names
 
     @pytest.mark.asyncio
+    async def test_consolidated_balance_uses_fx(self, db_session, sample_group):
+        """Pass `convert_to` and the per-currency map is summed via FX."""
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            10000, "EUR", "lunch",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.bob.id,
+            10000, "USD", "snacks",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+
+        class _FxStub:
+            async def convert(self, cents, from_c, to_c):
+                # USD->EUR = 0.5, EUR->USD = 2
+                if from_c == to_c:
+                    return cents, Decimal(1)
+                if from_c == "USD" and to_c == "EUR":
+                    return cents // 2, Decimal("0.5")
+                if from_c == "EUR" and to_c == "USD":
+                    return cents * 2, Decimal(2)
+                raise AssertionError(f"unexpected pair {from_c}->{to_c}")
+
+        result = await service.get_balances(
+            db_session, sample_group.group_id, convert_to="EUR", fx=_FxStub()
+        )
+        assert result.converted is not None
+        assert result.converted["currency"] == "EUR"
+        # Bob owes Alice 5000 EUR; Alice owes Bob 5000 USD = 2500 EUR.
+        # Net: Bob owes Alice 2500 EUR.
+        debts = result.converted["debts"]
+        assert len(debts) == 1
+        assert debts[0]["debtor"] == "Bob"
+        assert debts[0]["creditor"] == "Alice"
+        assert debts[0]["amount_cents"] == 2500
+
+    @pytest.mark.asyncio
     async def test_balance_partitions_by_currency(self, db_session, sample_group):
         await service.add_expense(
             db_session, sample_group.group_id, sample_group.alice.id,
@@ -227,6 +270,47 @@ class TestExpenseServiceDB:
         with pytest.raises(NotFoundError):
             await service.resolve_expense_by_description(
                 db_session, sample_group.group_id, "nonexistent"
+            )
+
+
+class TestUpdateExpenseCurrencyConversion:
+    @pytest.mark.asyncio
+    async def test_currency_only_change_converts_amount(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            10000, "EUR", "hotel",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+        expense = (await service.list_expenses(db_session, sample_group.group_id))[0]
+
+        class _FxStub:
+            async def convert(self, cents, from_c, to_c):
+                # EUR->USD at 1.10
+                return int(cents * Decimal("1.10")), Decimal("1.10")
+
+        updated, changes = await service.update_expense(
+            db_session, expense, new_currency="USD", fx=_FxStub(),
+        )
+        assert updated.currency == "USD"
+        assert updated.amount_cents == 11000
+        assert any(c["field"] == "amount" and c.get("converted_from") == "EUR" for c in changes)
+
+    @pytest.mark.asyncio
+    async def test_currency_only_change_without_fx_raises(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "taxi",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 5000,
+            ),
+        )
+        expense = (await service.list_expenses(db_session, sample_group.group_id))[0]
+
+        with pytest.raises(ExpenseError, match="FX provider required"):
+            await service.update_expense(
+                db_session, expense, new_currency="USD", fx=None,
             )
 
 

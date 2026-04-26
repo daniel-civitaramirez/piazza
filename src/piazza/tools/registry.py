@@ -123,9 +123,21 @@ AGENT_TOOLS: list[dict] = [
         "name": "get_balances",
         "description": (
             "Show who owes whom in the group. Returns debts grouped by"
-            " currency so mixed-currency groups stay mathematically honest."
+            " currency. Pass `currency` (ISO-4217 code) to additionally"
+            " return a single-currency consolidated view at today's FX rate."
         ),
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "currency": {
+                    "type": "string",
+                    "description": (
+                        "ISO-4217 code (e.g. EUR, USD) to consolidate the"
+                        " mixed-currency balance into a single view."
+                    ),
+                },
+            },
+        },
     },
     {
         "name": "settle_expense",
@@ -184,7 +196,11 @@ AGENT_TOOLS: list[dict] = [
                 },
                 "currency": {
                     "type": "string",
-                    "description": "New currency code (if changing)",
+                    "description": (
+                        "New currency code (if changing). When changed without"
+                        " a new amount, the stored amount is converted at"
+                        " today's FX rate so the real value is preserved."
+                    ),
                 },
                 "new_description": {
                     "type": "string",

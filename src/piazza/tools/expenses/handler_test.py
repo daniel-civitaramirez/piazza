@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
+from piazza.core.fx import set_fx_provider
 from piazza.tools.expenses import handler, service
 from piazza.tools.schemas import Entities
+
+
+class _FxStub:
+    """A 1 USD = 0.5 EUR (USD->EUR halves, EUR->USD doubles) FX stub."""
+
+    async def convert(self, cents, from_c, to_c):
+        if from_c == to_c:
+            return cents, Decimal(1)
+        if from_c == "USD" and to_c == "EUR":
+            return cents // 2, Decimal("0.5")
+        if from_c == "EUR" and to_c == "USD":
+            return cents * 2, Decimal(2)
+        raise AssertionError(f"unexpected pair {from_c}->{to_c}")
+
+
+@pytest.fixture
+def fx_stub():
+    set_fx_provider(_FxStub())  # type: ignore[arg-type]
+    yield
+    set_fx_provider(None)
 
 
 def _shares_for_even(ids, amount_cents):
@@ -576,3 +599,134 @@ class TestHandleExpenseDeleteByNumber:
         )
         assert result["status"] == "error"
         assert result["reason"] == "missing_identifier"
+
+
+class TestHandleExpenseBalanceFx:
+    @pytest.mark.asyncio
+    async def test_default_view_returns_per_currency(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "lunch",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 3000,
+            ),
+        )
+        result = await handler.handle_expense_balance(
+            db_session, sample_group.group_id, sample_group.alice.id, Entities()
+        )
+        assert result["status"] == "ok"
+        assert "EUR" in result["debts_by_currency"]
+        assert result.get("converted") is None
+
+    @pytest.mark.asyncio
+    async def test_converted_view_with_fx(self, db_session, sample_group, fx_stub):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            10000, "EUR", "hotel",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.bob.id,
+            10000, "USD", "snacks",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+        entities = Entities(currency="eur")
+        result = await handler.handle_expense_balance(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ok"
+        assert result["converted"]["currency"] == "EUR"
+        debts = result["converted"]["debts"]
+        assert debts == [{"debtor": "Bob", "creditor": "Alice", "amount_cents": 2500}]
+
+    @pytest.mark.asyncio
+    async def test_converted_view_without_fx_falls_back(self, db_session, sample_group):
+        # No fx_stub fixture: get_fx_provider() raises, handler degrades gracefully.
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "lunch",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 3000,
+            ),
+        )
+        set_fx_provider(None)
+        result = await handler.handle_expense_balance(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            Entities(currency="USD"),
+        )
+        assert result["status"] == "ok"
+        assert result["fx_unavailable"] is True
+        assert result["requested_currency"] == "USD"
+        assert "EUR" in result["debts_by_currency"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_currency_returns_error(self, db_session, sample_group):
+        result = await handler.handle_expense_balance(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            Entities(currency="dollars"),
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "invalid_currency"
+
+
+class TestHandleExpenseUpdateCurrencyConversion:
+    @pytest.mark.asyncio
+    async def test_currency_only_update_converts(self, db_session, sample_group, fx_stub):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            10000, "EUR", "hotel",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            Entities(description="hotel", currency="USD"),
+        )
+        assert result["status"] == "ok"
+        assert result["currency"] == "USD"
+        assert result["amount_cents"] == 20000  # EUR->USD doubled by stub
+        assert any(c["field"] == "amount" and c.get("converted_from") == "EUR"
+                   for c in result["changes"])
+
+    @pytest.mark.asyncio
+    async def test_currency_only_update_without_fx_returns_error(
+        self, db_session, sample_group
+    ):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "taxi",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 5000,
+            ),
+        )
+        set_fx_provider(None)
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            Entities(description="taxi", currency="USD"),
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "fx_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_currency_and_amount_skips_fx(self, db_session, sample_group):
+        # No FX wired — but caller supplies the new amount, so no conversion.
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "taxi",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 5000,
+            ),
+        )
+        set_fx_provider(None)
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            Entities(description="taxi", currency="USD", amount=60.0),
+        )
+        assert result["status"] == "ok"
+        assert result["currency"] == "USD"
+        assert result["amount_cents"] == 6000

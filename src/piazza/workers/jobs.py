@@ -183,6 +183,20 @@ async def fire_reminders_job(ctx: dict) -> int:
 # ---------- Worker configuration ----------
 
 
+async def _on_startup(ctx: dict) -> None:
+    """Wire process-wide singletons that handlers depend on."""
+    from piazza.core.fx import FxProvider, init_fx_provider
+
+    init_fx_provider(
+        FxProvider(
+            api_key=settings.openexchangerates_key,
+            redis=ctx.get("redis"),
+            cache_ttl_seconds=settings.fx_cache_ttl_seconds,
+        )
+    )
+    logger.info("worker_fx_provider_initialized", configured=bool(settings.openexchangerates_key))
+
+
 class WorkerSettings:
     functions = [process_message_job]
     redis_settings = redis_settings()
@@ -190,6 +204,7 @@ class WorkerSettings:
     job_timeout = settings.worker_job_timeout
     retry_jobs = False  # Handlers have DB side effects; retry in-job instead
     max_tries = 1
+    on_startup = _on_startup
 
     cron_jobs = [
         cron(fire_reminders_job, second=settings.reminder_cron_seconds_set),

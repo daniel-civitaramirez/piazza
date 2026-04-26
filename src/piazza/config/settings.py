@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     max_message_length: int = 2000
     default_currency: str = "EUR"
 
+    # FX (openexchangerates.org)
+    openexchangerates_key: str = ""
+    fx_cache_ttl_seconds: int = 3600
+
     # WhatsApp client
     wa_send_max_retries: int = 3
     wa_send_backoff_base: float = 0.5

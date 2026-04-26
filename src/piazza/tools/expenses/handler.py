@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from piazza.config.settings import settings
 from piazza.core.currency import InvalidCurrencyError, normalize_or
 from piazza.core.exceptions import ExpenseError, NotFoundError
+from piazza.core.fx import FxUnavailableError, get_fx_provider
 from piazza.db.models.expense import Expense
 from piazza.db.repositories.member import (
     find_member_by_name,
@@ -213,13 +214,39 @@ async def handle_expense_balance(
 ) -> dict:
     """Show who owes what.
 
-    Default view returns debts grouped by currency. Cross-currency
-    consolidation lands in commit 3 with the FX layer.
+    Default view returns debts grouped by currency. When the user supplies
+    a currency, also return a single-currency consolidated view at today's
+    live FX rate.
     """
-    result = await service.get_balances(session, group_id)
+    convert_to: str | None = None
+    if entities.currency:
+        try:
+            convert_to = normalize_or(entities.currency, settings.default_currency)
+        except InvalidCurrencyError:
+            return error_response(Reason.INVALID_CURRENCY, currency=entities.currency)
+
+    try:
+        result = await service.get_balances(
+            session,
+            group_id,
+            convert_to=convert_to,
+            fx=get_fx_provider() if convert_to else None,
+        )
+    except FxUnavailableError:
+        # Fall back to the per-currency view so the user still gets data.
+        result = await service.get_balances(session, group_id)
+        return ok_response(
+            Action.GET_BALANCES,
+            debts_by_currency=result.debts_by_currency,
+            converted=None,
+            fx_unavailable=True,
+            requested_currency=convert_to,
+        )
+
     return ok_response(
         Action.GET_BALANCES,
         debts_by_currency=result.debts_by_currency,
+        converted=result.converted,
     )
 
 
@@ -358,6 +385,22 @@ async def handle_expense_update(
             return result
         new_shares = result
 
+    needs_fx = (
+        new_currency is not None
+        and new_amount_cents is None
+        and new_currency != expense.currency
+    )
+    fx = None
+    if needs_fx:
+        try:
+            fx = get_fx_provider()
+        except FxUnavailableError:
+            return error_response(
+                Reason.FX_UNAVAILABLE,
+                from_currency=expense.currency,
+                to_currency=new_currency,
+            )
+
     try:
         expense, changes = await service.update_expense(
             session=session,
@@ -367,9 +410,22 @@ async def handle_expense_update(
             new_description=entities.new_description,
             new_payer_id=new_payer_id,
             new_shares=new_shares,
+            fx=fx,
         )
-    except ExpenseError:
+    except ExpenseError as exc:
+        if str(exc) == "FX provider required to convert currency":
+            return error_response(
+                Reason.FX_UNAVAILABLE,
+                from_currency=expense.currency,
+                to_currency=new_currency,
+            )
         return error_response(Reason.NOTHING_TO_UPDATE)
+    except FxUnavailableError:
+        return error_response(
+            Reason.FX_UNAVAILABLE,
+            from_currency=expense.currency,
+            to_currency=new_currency,
+        )
 
     return ok_response(
         Action.UPDATE_EXPENSE,

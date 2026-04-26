@@ -79,6 +79,24 @@ async def lifespan(app: FastAPI):
         logger.warning("arq_pool_init_failed", exc_info=True)
         app.state.arq_pool = None
 
+    # Wire FX provider with the same Redis used elsewhere.
+    from redis.asyncio import Redis as RedisClient
+
+    from piazza.core.fx import FxProvider, init_fx_provider
+
+    fx_redis = RedisClient.from_url(
+        settings.redis_url,
+        password=settings.redis_password or None,
+    )
+    init_fx_provider(
+        FxProvider(
+            api_key=settings.openexchangerates_key,
+            redis=fx_redis,
+            cache_ttl_seconds=settings.fx_cache_ttl_seconds,
+        )
+    )
+    logger.info("fx_provider_initialized", configured=bool(settings.openexchangerates_key))
+
     yield
 
     # Cleanup
