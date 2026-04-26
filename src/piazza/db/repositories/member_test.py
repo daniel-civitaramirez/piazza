@@ -130,6 +130,16 @@ class TestFindMemberByName:
         assert member is None
         assert candidates == []
 
+    @pytest.mark.asyncio
+    async def test_typo_resolves_to_unique_match(self, db_session, sample_group):
+        # "Aliec" is a typo of "Alice" — fuzzy should resolve unambiguously
+        member, candidates = await find_member_by_name(
+            db_session, sample_group.group_id, "Aliec"
+        )
+        assert member is not None
+        assert member.display_name == "Alice"
+        assert candidates == []
+
 
 class TestGetMemberByName:
     @pytest.mark.asyncio

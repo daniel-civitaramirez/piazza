@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+from rapidfuzz import fuzz, process, utils
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -114,7 +115,12 @@ async def get_expenses(
 async def find_expenses_by_description(
     session: AsyncSession, group_id: uuid.UUID, description: str
 ) -> list[Expense]:
-    """Find non-deleted expenses matching description (case-insensitive)."""
+    """Find non-deleted expenses fuzzy-matching description, ranked best-first.
+
+    Uses rapidfuzz WRatio, which scores exact substrings at 100 and degrades
+    smoothly with edit distance. score_cutoff=70 accepts 1-2 character typos
+    and rejects unrelated strings.
+    """
     result = await session.execute(
         select(Expense)
         .options(
@@ -133,11 +139,27 @@ async def find_expenses_by_description(
     key = _key()
     for exp in expenses:
         _decrypt_expense(exp, key)
-    return [
-        e for e in expenses
-        if e.description and description.lower() in e.description.lower()  # type: ignore[union-attr]
-    ]
+    candidates = [e for e in expenses if e.description]
+    matches = process.extract(
+        description,
+        [e.description for e in candidates],
+        scorer=fuzz.WRatio,
+        processor=utils.default_process,
+        score_cutoff=70,
+        limit=5,
+    )
+    return [candidates[idx] for _, _, idx in matches]
 
+
+
+async def update_description(
+    session: AsyncSession, expense: Expense, new_description: str | None
+) -> None:
+    """Update an expense's description (encrypts on write, keeps in-memory plaintext)."""
+    key = _key()
+    expense.description = encrypt_nullable(new_description, key)  # type: ignore[assignment]
+    await session.flush()
+    set_decrypted(expense, "description", new_description)
 
 
 async def get_expense_shares(

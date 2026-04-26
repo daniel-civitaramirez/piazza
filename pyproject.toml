@@ -20,6 +20,7 @@ dependencies = [
     "cryptography>=44.0",
     "llm-guard>=0.3",
     "sentry-sdk[fastapi]>=2.19",
+    "rapidfuzz>=3.10",
 ]
 
 [project.optional-dependencies]

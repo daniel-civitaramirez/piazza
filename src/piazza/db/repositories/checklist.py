@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from rapidfuzz import fuzz, process, utils
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,10 +80,17 @@ async def find_items(
     group_id: uuid.UUID,
     query: str,
 ) -> list[ChecklistItem]:
-    """Find checklist items matching a query (case-insensitive on content)."""
+    """Find checklist items fuzzy-matching query on content, ranked best-first."""
     items = await get_items(session, group_id, include_done=True)
-    q = query.lower()
-    return [i for i in items if q in i.content.lower()]  # type: ignore[union-attr]
+    matches = process.extract(
+        query,
+        [i.content for i in items],
+        scorer=fuzz.WRatio,
+        processor=utils.default_process,
+        score_cutoff=70,
+        limit=5,
+    )
+    return [items[idx] for _, _, idx in matches]
 
 
 async def check_item(session: AsyncSession, item: ChecklistItem) -> ChecklistItem:

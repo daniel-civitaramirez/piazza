@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+from rapidfuzz import fuzz, process, utils
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -189,8 +190,8 @@ async def find_member_by_name(
 
     Returns (exact_match, fuzzy_candidates):
     - If exact case-insensitive match found: (member, [])
-    - If single substring match found: (member, [])
-    - If multiple substring matches: (None, [candidates...])
+    - If single fuzzy match found: (member, [])
+    - If multiple fuzzy matches: (None, [candidates...])
     - If no match at all: (None, [])
     """
     # Try exact match first (fast path)
@@ -198,12 +199,17 @@ async def find_member_by_name(
     if exact is not None:
         return exact, []
 
-    # Try substring match on active members
+    # Fuzzy fallback on active members
     members = await get_active_members(session, group_id)
-    candidates = [
-        m for m in members
-        if display_name.lower() in m.display_name.lower()  # type: ignore[union-attr]
-    ]
+    matches = process.extract(
+        display_name,
+        [m.display_name for m in members],
+        scorer=fuzz.WRatio,
+        processor=utils.default_process,
+        score_cutoff=70,
+        limit=5,
+    )
+    candidates = [members[idx] for _, _, idx in matches]
     if len(candidates) == 1:
         return candidates[0], []
     return None, candidates

@@ -52,6 +52,30 @@ class TestChecklistRepoEncryption:
         assert results[0].content == "Buy Milk"
 
     @pytest.mark.asyncio
+    async def test_find_items_fuzzy_typo(self, db_session, sample_group):
+        await checklist_repo.create_item(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            content="Buy Milk",
+        )
+        await db_session.commit()
+
+        # Typo in the user's query — fuzzy fallback should still resolve it.
+        results = await checklist_repo.find_items(db_session, sample_group.group_id, "buy mlik")
+        assert len(results) == 1
+        assert results[0].content == "Buy Milk"
+
+    @pytest.mark.asyncio
+    async def test_find_items_no_match_below_threshold(self, db_session, sample_group):
+        await checklist_repo.create_item(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            content="Buy Milk",
+        )
+        await db_session.commit()
+
+        results = await checklist_repo.find_items(db_session, sample_group.group_id, "xyz")
+        assert results == []
+
+    @pytest.mark.asyncio
     async def test_check_and_uncheck(self, db_session, sample_group):
         item = await checklist_repo.create_item(
             db_session, sample_group.group_id, sample_group.alice.id,

@@ -8,9 +8,11 @@ from piazza.db.repositories.expense import (
     create_expense,
     create_expense_participants,
     create_settlement,
+    find_expenses_by_description,
     get_expense_shares,
     get_expenses,
     get_settlements,
+    update_description,
 )
 
 
@@ -97,6 +99,85 @@ class TestGetExpenseShares:
         assert len(shares) == 2
         payer_ids = {s[0] for s in shares}
         assert sample_group.alice.id in payer_ids
+
+
+class TestFindExpensesByDescription:
+    @pytest.mark.asyncio
+    async def test_exact_substring(self, db_session, sample_group):
+        await create_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "dentist appointment",
+        )
+        results = await find_expenses_by_description(
+            db_session, sample_group.group_id, "dentist"
+        )
+        assert len(results) == 1
+        assert results[0].description == "dentist appointment"
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_typo(self, db_session, sample_group):
+        await create_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "dentist appointment",
+        )
+        results = await find_expenses_by_description(
+            db_session, sample_group.group_id, "dentst"
+        )
+        assert len(results) == 1
+        assert results[0].description == "dentist appointment"
+
+    @pytest.mark.asyncio
+    async def test_no_match_below_threshold(self, db_session, sample_group):
+        await create_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "dentist appointment",
+        )
+        results = await find_expenses_by_description(
+            db_session, sample_group.group_id, "qwertyz"
+        )
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_excludes_deleted(self, db_session, sample_group):
+        e = await create_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "dentist",
+        )
+        e.is_deleted = True
+        await db_session.flush()
+        results = await find_expenses_by_description(
+            db_session, sample_group.group_id, "dentist"
+        )
+        assert results == []
+
+
+class TestUpdateDescription:
+    @pytest.mark.asyncio
+    async def test_round_trip(self, db_session, sample_group):
+        expense = await create_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "dinner",
+        )
+        await update_description(db_session, expense, "fancy dinner")
+        # In-memory plaintext is updated
+        assert expense.description == "fancy dinner"
+
+        # Fresh fetch decrypts to the new value (verifies the ciphertext is correct)
+        db_session.expunge(expense)
+        refetched = (await get_expenses(db_session, sample_group.group_id))[0]
+        assert refetched.description == "fancy dinner"
+
+    @pytest.mark.asyncio
+    async def test_set_to_none(self, db_session, sample_group):
+        expense = await create_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "dinner",
+        )
+        await update_description(db_session, expense, None)
+        assert expense.description is None
+        db_session.expunge(expense)
+        refetched = (await get_expenses(db_session, sample_group.group_id))[0]
+        assert refetched.description is None
 
 
 class TestSettlements:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from rapidfuzz import fuzz, process, utils
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,9 +78,14 @@ async def get_items(
 async def find_items_by_title(
     session: AsyncSession, group_id: uuid.UUID, title_query: str
 ) -> list[ItineraryItem]:
-    """Find itinerary items matching a title query (case-insensitive)."""
+    """Find itinerary items fuzzy-matching title, ranked best-first."""
     items = await get_items(session, group_id)
-    return [
-        i for i in items
-        if title_query.lower() in i.title.lower()  # type: ignore[union-attr]
-    ]
+    matches = process.extract(
+        title_query,
+        [i.title for i in items],
+        scorer=fuzz.WRatio,
+        processor=utils.default_process,
+        score_cutoff=70,
+        limit=5,
+    )
+    return [items[idx] for _, _, idx in matches]

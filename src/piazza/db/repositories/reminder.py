@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from rapidfuzz import fuzz, process, utils
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -77,12 +78,17 @@ async def get_due_reminders(
 async def find_active_reminders_by_message(
     session: AsyncSession, group_id: uuid.UUID, query: str
 ) -> list[Reminder]:
-    """Find active reminders whose message matches query (case-insensitive)."""
+    """Find active reminders fuzzy-matching message, ranked best-first."""
     reminders = await get_active_reminders(session, group_id)
-    return [
-        r for r in reminders
-        if query.lower() in r.message.lower()  # type: ignore[union-attr]
-    ]
+    matches = process.extract(
+        query,
+        [r.message for r in reminders],
+        scorer=fuzz.WRatio,
+        processor=utils.default_process,
+        score_cutoff=70,
+        limit=5,
+    )
+    return [reminders[idx] for _, _, idx in matches]
 
 
 async def cancel_reminder(
