@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from piazza.core.exceptions import ExpenseError, NotFoundError
+from piazza.db.models.expense import ExpenseParticipant
 from piazza.tools.expenses import service
 from piazza.tools.expenses.service import (
     calculate_balances,
@@ -61,31 +64,41 @@ class TestBalances:
 
     def test_single_expense(self):
         a, b, c = self._ids(3)
-        rows = [(a, a, 1000), (a, b, 1000), (a, c, 1000)]
+        rows = [(a, a, 1000, "EUR"), (a, b, 1000, "EUR"), (a, c, 1000, "EUR")]
         balances = calculate_balances(rows, [])
-        assert balances[a] == 2000
-        assert balances[b] == -1000
-        assert balances[c] == -1000
+        assert balances["EUR"][a] == 2000
+        assert balances["EUR"][b] == -1000
+        assert balances["EUR"][c] == -1000
 
     def test_multiple_expenses(self):
         a, b = self._ids(2)
-        rows = [(a, a, 1000), (a, b, 1000)]
-        rows += [(b, a, 500), (b, b, 500)]
+        rows = [(a, a, 1000, "EUR"), (a, b, 1000, "EUR")]
+        rows += [(b, a, 500, "EUR"), (b, b, 500, "EUR")]
         balances = calculate_balances(rows, [])
-        assert balances[a] == 500
-        assert balances[b] == -500
+        assert balances["EUR"][a] == 500
+        assert balances["EUR"][b] == -500
 
     def test_after_settlement(self):
         a, b = self._ids(2)
-        rows = [(a, a, 500), (a, b, 500)]
-        settlements = [(b, a, 500)]
+        rows = [(a, a, 500, "EUR"), (a, b, 500, "EUR")]
+        settlements = [(b, a, 500, "EUR")]
         balances = calculate_balances(rows, settlements)
-        assert balances[a] == 0
-        assert balances[b] == 0
+        assert balances["EUR"][a] == 0
+        assert balances["EUR"][b] == 0
 
     def test_no_expenses(self):
         balances = calculate_balances([], [])
         assert balances == {}
+
+    def test_currencies_partitioned(self):
+        a, b = self._ids(2)
+        rows = [
+            (a, a, 1000, "EUR"), (a, b, 1000, "EUR"),
+            (b, a, 500, "USD"), (b, b, 500, "USD"),
+        ]
+        balances = calculate_balances(rows, [])
+        assert balances["EUR"] == {a: 1000, b: -1000}
+        assert balances["USD"] == {a: -500, b: 500}
 
 
 # ---------- Simplify debts (greedy min-flow) ----------
@@ -182,9 +195,72 @@ class TestExpenseServiceDB:
             ),
         )
         result = await service.get_balances(db_session, sample_group.group_id)
-        assert len(result.debts) > 0
-        names = {d["debtor"] for d in result.debts} | {d["creditor"] for d in result.debts}
+        assert "EUR" in result.debts_by_currency
+        eur_debts = result.debts_by_currency["EUR"]
+        assert len(eur_debts) > 0
+        names = {d["debtor"] for d in eur_debts} | {d["creditor"] for d in eur_debts}
         assert "Alice" in names
+
+    @pytest.mark.asyncio
+    async def test_consolidated_balance_uses_fx(self, db_session, sample_group):
+        """Pass `convert_to` and the per-currency map is summed via FX."""
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            10000, "EUR", "lunch",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.bob.id,
+            10000, "USD", "snacks",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+
+        class _FxStub:
+            async def convert(self, cents, from_c, to_c):
+                # USD->EUR = 0.5, EUR->USD = 2
+                if from_c == to_c:
+                    return cents, Decimal(1)
+                if from_c == "USD" and to_c == "EUR":
+                    return cents // 2, Decimal("0.5")
+                if from_c == "EUR" and to_c == "USD":
+                    return cents * 2, Decimal(2)
+                raise AssertionError(f"unexpected pair {from_c}->{to_c}")
+
+        result = await service.get_balances(
+            db_session, sample_group.group_id, convert_to="EUR", fx=_FxStub()
+        )
+        assert result.converted is not None
+        assert result.converted["currency"] == "EUR"
+        # Bob owes Alice 5000 EUR; Alice owes Bob 5000 USD = 2500 EUR.
+        # Net: Bob owes Alice 2500 EUR.
+        debts = result.converted["debts"]
+        assert len(debts) == 1
+        assert debts[0]["debtor"] == "Bob"
+        assert debts[0]["creditor"] == "Alice"
+        assert debts[0]["amount_cents"] == 2500
+
+    @pytest.mark.asyncio
+    async def test_balance_partitions_by_currency(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "lunch",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 3000,
+            ),
+        )
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.bob.id,
+            2000, "USD", "snacks",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 2000,
+            ),
+        )
+        result = await service.get_balances(db_session, sample_group.group_id)
+        assert set(result.debts_by_currency.keys()) == {"EUR", "USD"}
 
     @pytest.mark.asyncio
     async def test_resolve_by_number_not_found(self, db_session, sample_group):
@@ -196,6 +272,63 @@ class TestExpenseServiceDB:
         with pytest.raises(NotFoundError):
             await service.resolve_expense_by_description(
                 db_session, sample_group.group_id, "nonexistent"
+            )
+
+
+class TestUpdateExpenseCurrencyConversion:
+    @pytest.mark.asyncio
+    async def test_currency_only_change_converts_amount(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            10000, "EUR", "hotel",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 10000,
+            ),
+        )
+        expense = (await service.list_expenses(db_session, sample_group.group_id))[0]
+
+        class _FxStub:
+            async def convert(self, cents, from_c, to_c):
+                # EUR->USD at 1.10
+                return int(cents * Decimal("1.10")), Decimal("1.10")
+
+        updated, changes = await service.update_expense(
+            db_session, expense, new_currency="USD", fx=_FxStub(),
+        )
+        assert updated.currency == "USD"
+        assert updated.amount_cents == 11000
+        assert any(c["field"] == "amount" and c.get("converted_from") == "EUR" for c in changes)
+        # Regression: shares must rescale to the new total, not be reused verbatim.
+        # 5000 EUR share * (11000 / 10000) = 5500 USD; sum of shares == new total.
+        # Read shares directly from the DB to bypass the SQLAlchemy identity map
+        # (conftest uses expire_on_commit=False, so cached collections persist).
+        rows = (await db_session.execute(
+            select(ExpenseParticipant.share_cents)
+            .where(ExpenseParticipant.expense_id == updated.id)
+        )).scalars().all()
+        share_total = sum(rows)
+        assert share_total == 11000, (
+            f"shares must sum to new total; got {share_total}, expected 11000"
+        )
+        for share in rows:
+            assert share == 5500, (
+                f"each share should be 5500 USD (5000 EUR * 1.10), got {share}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_currency_only_change_without_fx_raises(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            5000, "EUR", "taxi",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 5000,
+            ),
+        )
+        expense = (await service.list_expenses(db_session, sample_group.group_id))[0]
+
+        with pytest.raises(ExpenseError, match="FX provider required"):
+            await service.update_expense(
+                db_session, expense, new_currency="USD", fx=None,
             )
 
 

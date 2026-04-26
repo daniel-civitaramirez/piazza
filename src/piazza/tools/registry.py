@@ -77,6 +77,8 @@ AGENT_TOOLS: list[dict] = [
         "description": (
             "Record a shared expense."
             " Set paid_by to the sender's name unless someone else paid."
+            " The expense is stored in its own currency; mixed-currency"
+            " groups are normal and supported."
         ),
         "input_schema": {
             "type": "object",
@@ -87,7 +89,10 @@ AGENT_TOOLS: list[dict] = [
                 },
                 "currency": {
                     "type": "string",
-                    "description": "Currency code (EUR, USD, GBP, etc.)",
+                    "description": (
+                        "ISO-4217 code (EUR, USD, GBP, etc.)."
+                        " Omit to use the group's default currency."
+                    ),
                 },
                 "description": {
                     "type": "string",
@@ -121,12 +126,40 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "get_balances",
-        "description": "Show who owes whom in the group.",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": (
+            "Show who owes whom in the group."
+            " Default response groups debts by currency (one debt list per"
+            " ISO-4217 code) so mixed-currency groups stay mathematically"
+            " honest."
+            " Pass `currency` to additionally receive a single-currency"
+            " consolidated view computed at today's live FX rate."
+            " If the response carries `fx_unavailable: true`, FX rates"
+            " could not be fetched — relay the per-currency view to the"
+            " user and tell them conversion is temporarily unavailable."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "currency": {
+                    "type": "string",
+                    "description": (
+                        "ISO-4217 code (e.g. EUR, USD) to consolidate the"
+                        " mixed-currency balance into a single view."
+                    ),
+                },
+            },
+        },
     },
     {
         "name": "settle_expense",
-        "description": "Record a settlement payment between members.",
+        "description": (
+            "Record a settlement payment between members."
+            " The settlement is stored in whatever currency the user"
+            " actually paid in — settling in a currency that differs from"
+            " the outstanding debt is supported. To inspect the resulting"
+            " cross-currency net, follow up with get_balances and pass"
+            " the currency the user wants the answer in."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -139,7 +172,13 @@ AGENT_TOOLS: list[dict] = [
                     "type": "number",
                     "description": "Settlement amount",
                 },
-                "currency": {"type": "string"},
+                "currency": {
+                    "type": "string",
+                    "description": (
+                        "ISO-4217 code of the payment."
+                        " Omit to use the group's default currency."
+                    ),
+                },
             },
             "required": ["amount", "participants"],
         },
@@ -163,7 +202,13 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "update_expense",
-        "description": "Update a previously logged expense.",
+        "description": (
+            "Update a previously logged expense."
+            " Changing only `currency` converts the stored amount at"
+            " today's FX rate so the real value is preserved."
+            " Supplying both `amount` and `currency` re-states the expense"
+            " verbatim with the user's number — no FX conversion."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -181,7 +226,11 @@ AGENT_TOOLS: list[dict] = [
                 },
                 "currency": {
                     "type": "string",
-                    "description": "New currency code (if changing)",
+                    "description": (
+                        "New currency code (if changing). When changed without"
+                        " a new amount, the stored amount is converted at"
+                        " today's FX rate so the real value is preserved."
+                    ),
                 },
                 "new_description": {
                     "type": "string",

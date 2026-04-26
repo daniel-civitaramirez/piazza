@@ -5,6 +5,7 @@ from __future__ import annotations
 import structlog
 
 from piazza.config.settings import settings
+from piazza.messaging.whatsapp import client
 
 logger = structlog.get_logger()
 
@@ -49,8 +50,6 @@ async def notify_admin_new_group(
     """
     if not settings.admin_jid:
         return
-
-    from piazza.messaging.whatsapp import client
 
     message = _build_message(group_jid, subject, participant_jids)
 

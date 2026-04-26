@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.config.settings import settings
+from piazza.core.currency import InvalidCurrencyError, normalize_or
 from piazza.core.exceptions import ExpenseError, NotFoundError
+from piazza.core.fx import FxUnavailableError, get_fx_provider
 from piazza.db.models.expense import Expense
 from piazza.db.repositories.member import (
     find_member_by_name,
@@ -32,6 +35,22 @@ from piazza.tools.schemas import Entities
 
 def _group_member_names(members: list) -> list[str]:
     return [m.display_name for m in members]
+
+
+def _to_cents(amount: float | int | str) -> int:
+    try:
+        return int(
+            (Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"invalid amount: {amount!r}") from exc
+
+
+def _extract_name(entry: str | dict) -> str:
+    if isinstance(entry, dict):
+        name = entry.get("name", "")
+        return name if isinstance(name, str) else ""
+    return str(entry)
 
 
 def _not_found_from_exc(exc: NotFoundError) -> dict:
@@ -97,8 +116,8 @@ async def _resolve_shares(
     failed: list[str] = []
 
     for entry in participants:
-        name = entry.get("name", "")
-        raw_amount = entry.get("amount")
+        name = entry.get("name", "") if isinstance(entry, dict) else _extract_name(entry)
+        raw_amount = entry.get("amount") if isinstance(entry, dict) else None
         if not name or raw_amount is None:
             continue
 
@@ -107,7 +126,10 @@ async def _resolve_shares(
             failed.append(name)
             continue
 
-        entry_cents = int(round(float(raw_amount) * 100))
+        if member.id == payer_id:
+            continue
+
+        entry_cents = _to_cents(raw_amount)
         if entry_cents <= 0:
             return error_response(Reason.NEGATIVE_AMOUNT, name=name)
         resolved.append((member.id, entry_cents))
@@ -119,7 +141,6 @@ async def _resolve_shares(
             group_members=_group_member_names(active_members),
         )
 
-    # Compute payer share
     participant_total = sum(cents for _, cents in resolved)
     payer_share = amount_cents - participant_total
     if payer_share < 0:
@@ -138,8 +159,11 @@ async def handle_expense_add(
     if entities.amount is None:
         return error_response(Reason.MISSING_AMOUNT)
 
-    amount_cents = int(round(entities.amount * 100))
-    currency = entities.currency or settings.default_currency
+    amount_cents = _to_cents(entities.amount)
+    try:
+        currency = normalize_or(entities.currency, settings.default_currency)
+    except InvalidCurrencyError:
+        return error_response(Reason.INVALID_CURRENCY, currency=entities.currency)
 
     result = await _resolve_payer(session, group_id, sender_id, entities.paid_by)
     if isinstance(result, dict):
@@ -176,8 +200,36 @@ async def handle_expense_balance(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> dict:
     """Show who owes what."""
-    result = await service.get_balances(session, group_id)
-    return ok_response(Action.GET_BALANCES, debts=result.debts)
+    convert_to: str | None = None
+    if entities.currency:
+        try:
+            convert_to = normalize_or(entities.currency, settings.default_currency)
+        except InvalidCurrencyError:
+            return error_response(Reason.INVALID_CURRENCY, currency=entities.currency)
+
+    try:
+        result = await service.get_balances(
+            session,
+            group_id,
+            convert_to=convert_to,
+            fx=get_fx_provider() if convert_to else None,
+        )
+    except FxUnavailableError as exc:
+        result = await service.get_balances(session, group_id)
+        return ok_response(
+            Action.GET_BALANCES,
+            debts_by_currency=result.debts_by_currency,
+            converted=None,
+            fx_unavailable=True,
+            requested_currency=convert_to,
+            fx_error=str(exc),
+        )
+
+    return ok_response(
+        Action.GET_BALANCES,
+        debts_by_currency=result.debts_by_currency,
+        converted=result.converted,
+    )
 
 
 async def handle_expense_settle(
@@ -187,16 +239,21 @@ async def handle_expense_settle(
     if entities.amount is None:
         return error_response(Reason.MISSING_AMOUNT)
 
-    amount_cents = int(round(entities.amount * 100))
+    amount_cents = _to_cents(entities.amount)
     if amount_cents <= 0:
         return error_response(Reason.NEGATIVE_AMOUNT)
 
-    currency = entities.currency or settings.default_currency
+    try:
+        currency = normalize_or(entities.currency, settings.default_currency)
+    except InvalidCurrencyError:
+        return error_response(Reason.INVALID_CURRENCY, currency=entities.currency)
 
     if not entities.participants or len(entities.participants) != 1:
         return error_response(Reason.MISSING_SETTLEMENT_PAYEE)
 
-    payee_name = str(entities.participants[0])
+    payee_name = _extract_name(entities.participants[0])
+    if not payee_name:
+        return error_response(Reason.MISSING_SETTLEMENT_PAYEE)
     payee, _candidates = await find_member_by_name(
         session, group_id, payee_name
     )
@@ -261,7 +318,6 @@ async def handle_expense_update(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> dict:
     """Update an existing expense."""
-    # Resolve target expense
     try:
         if entities.item_number is not None:
             expense = await service.resolve_expense_by_number(
@@ -280,10 +336,16 @@ async def handle_expense_update(
         return _not_found_from_exc(exc)
 
     new_amount_cents = (
-        int(round(entities.amount * 100)) if entities.amount is not None else None
+        _to_cents(entities.amount) if entities.amount is not None else None
     )
 
-    # Resolve new payer if provided
+    new_currency: str | None = None
+    if entities.currency is not None:
+        try:
+            new_currency = normalize_or(entities.currency, settings.default_currency)
+        except InvalidCurrencyError:
+            return error_response(Reason.INVALID_CURRENCY, currency=entities.currency)
+
     new_payer_id = None
     if entities.paid_by:
         result = await _resolve_payer(session, group_id, sender_id, entities.paid_by)
@@ -291,7 +353,6 @@ async def handle_expense_update(
             return result
         new_payer_id = result
 
-    # Resolve new shares if provided
     new_shares = None
     if entities.participants is not None:
         anchor_id = new_payer_id or expense.payer_id
@@ -303,18 +364,47 @@ async def handle_expense_update(
             return result
         new_shares = result
 
+    needs_fx = (
+        new_currency is not None
+        and new_amount_cents is None
+        and new_currency != expense.currency
+    )
+    fx = None
+    if needs_fx:
+        try:
+            fx = get_fx_provider()
+        except FxUnavailableError:
+            return error_response(
+                Reason.FX_UNAVAILABLE,
+                from_currency=expense.currency,
+                to_currency=new_currency,
+            )
+
     try:
         expense, changes = await service.update_expense(
             session=session,
             expense=expense,
             new_amount_cents=new_amount_cents,
-            new_currency=entities.currency,
+            new_currency=new_currency,
             new_description=entities.new_description,
             new_payer_id=new_payer_id,
             new_shares=new_shares,
+            fx=fx,
         )
-    except ExpenseError:
+    except ExpenseError as exc:
+        if str(exc) == "FX provider required to convert currency":
+            return error_response(
+                Reason.FX_UNAVAILABLE,
+                from_currency=expense.currency,
+                to_currency=new_currency,
+            )
         return error_response(Reason.NOTHING_TO_UPDATE)
+    except FxUnavailableError:
+        return error_response(
+            Reason.FX_UNAVAILABLE,
+            from_currency=expense.currency,
+            to_currency=new_currency,
+        )
 
     return ok_response(
         Action.UPDATE_EXPENSE,

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import dateparser
 import structlog
 from dateutil.rrule import rrulestr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from piazza.core.exceptions import NotFoundError, ReminderError
@@ -244,14 +245,11 @@ async def set_group_timezone(
     session: AsyncSession, group_id: uuid.UUID, timezone_str: str
 ) -> str:
     """Validate and set the group timezone. Returns timezone name or raises ReminderError."""
-    import zoneinfo
-
     try:
         zoneinfo.ZoneInfo(timezone_str)
     except (KeyError, zoneinfo.ZoneInfoNotFoundError):
         raise ReminderError(f"Unknown timezone: {timezone_str}")
 
-    from sqlalchemy import select
     result = await session.execute(
         select(Group).where(Group.id == group_id)
     )

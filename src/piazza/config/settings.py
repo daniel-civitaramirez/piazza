@@ -1,6 +1,11 @@
 """Application settings loaded from environment variables."""
 
+import base64
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+from piazza.core.currency import normalize as _normalize_currency
 
 # Approval status constants
 APPROVAL_PENDING = "pending"
@@ -57,6 +62,10 @@ class Settings(BaseSettings):
     max_message_length: int = 2000
     default_currency: str = "EUR"
 
+    # FX (openexchangerates.org)
+    openexchangerates_key: str = ""
+    fx_cache_ttl_seconds: int = 3600
+
     # WhatsApp client
     wa_send_max_retries: int = 3
     wa_send_backoff_base: float = 0.5
@@ -78,11 +87,14 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.1
 
+    @field_validator("default_currency")
+    @classmethod
+    def _validate_default_currency(cls, v: str) -> str:
+        return _normalize_currency(v)
+
     @property
     def encryption_key_bytes(self) -> bytes:
         """Return the encryption key decoded from base64."""
-        import base64
-
         return base64.b64decode(self.encryption_key)
 
     @property

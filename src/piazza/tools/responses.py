@@ -74,6 +74,8 @@ class Reason:
     PARTICIPANTS_NOT_FOUND = "participants_not_found"
     PARTICIPANTS_EXCEED_TOTAL = "participants_exceed_total"
     NEGATIVE_AMOUNT = "negative_amount"
+    INVALID_CURRENCY = "invalid_currency"
+    FX_UNAVAILABLE = "fx_unavailable"
 
     # Reminders
     MISSING_DESCRIPTION = "missing_description"

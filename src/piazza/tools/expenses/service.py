@@ -7,7 +7,9 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from piazza.core.currency import normalize as normalize_currency
 from piazza.core.exceptions import ExpenseError, NotFoundError
+from piazza.core.fx import FxProvider
 from piazza.db.models.expense import Expense
 from piazza.db.repositories import expense as expense_repo
 from piazza.db.repositories.member import get_all_members
@@ -17,6 +19,33 @@ from piazza.db.repositories.member import get_all_members
 
 def _member_map(members: list) -> dict[uuid.UUID, str]:
     return {m.id: m.display_name for m in members}
+
+
+def _rescale_shares(
+    expense: Expense, old_total_cents: int, new_total_cents: int
+) -> list[tuple[uuid.UUID, int]]:
+    """Proportionally rescale existing participant shares to a new total.
+
+    The remainder is absorbed into the largest share so the result still
+    sums exactly to `new_total_cents`. Caller must pass `old_total_cents`
+    explicitly because `expense.amount_cents` may already have been
+    mutated by the time we rescale.
+    """
+    if old_total_cents <= 0:
+        return [(p.member_id, new_total_cents) for p in (expense.participants or [])][:1]
+
+    rescaled: list[tuple[uuid.UUID, int]] = []
+    for p in expense.participants or []:
+        share = (p.share_cents * new_total_cents) // old_total_cents
+        rescaled.append((p.member_id, share))
+
+    drift = new_total_cents - sum(s for _, s in rescaled)
+    if drift and rescaled:
+        # Absorb drift into the largest share to stay exact.
+        idx = max(range(len(rescaled)), key=lambda i: rescaled[i][1])
+        member_id, share = rescaled[idx]
+        rescaled[idx] = (member_id, share + drift)
+    return rescaled
 
 
 def _named_shares(
@@ -54,9 +83,19 @@ class SettlementResult:
 
 @dataclass
 class BalanceResult:
-    """Data returned from balance queries."""
+    """Data returned from balance queries.
 
-    debts: list[dict]  # [{"debtor": str, "creditor": str, "amount_cents": int}]
+    `debts_by_currency` maps an ISO-4217 code to its simplified debt list.
+    Each entry: {"debtor": str, "creditor": str, "amount_cents": int}.
+
+    `converted` is set only when the caller asked for a single-currency
+    consolidated view: {"currency": str, "debts": [...]}. Conversions use
+    the live FX rate at query time and are advisory — the per-currency
+    view is the authoritative ledger.
+    """
+
+    debts_by_currency: dict[str, list[dict]]
+    converted: dict | None = None
 
 
 def expense_to_dict(exp: Expense, number: int | None = None) -> dict:
@@ -68,6 +107,7 @@ def expense_to_dict(exp: Expense, number: int | None = None) -> dict:
         if p.member
     ]
     d: dict = {
+        "id": str(exp.id)[:8],
         "amount_cents": exp.amount_cents,
         "currency": exp.currency,
         "description": exp.description,
@@ -98,27 +138,29 @@ def calculate_even_split(amount_cents: int, num_participants: int) -> list[int]:
 
 
 def calculate_balances(
-    expense_rows: list[tuple[uuid.UUID, uuid.UUID, int]],
-    settlements: list[tuple[uuid.UUID, uuid.UUID, int]],
-) -> dict[uuid.UUID, int]:
-    """Calculate net balance per member.
+    expense_rows: list[tuple[uuid.UUID, uuid.UUID, int, str]],
+    settlements: list[tuple[uuid.UUID, uuid.UUID, int, str]],
+) -> dict[str, dict[uuid.UUID, int]]:
+    """Calculate net balance per member, partitioned by currency.
 
     Positive = owed money (creditor). Negative = owes money (debtor).
 
-    expense_rows: (payer_id, participant_member_id, share_cents)
-    settlements: (payer_id, payee_id, amount_cents)
+    expense_rows: (payer_id, participant_member_id, share_cents, currency)
+    settlements: (payer_id, payee_id, amount_cents, currency)
     """
-    balances: dict[uuid.UUID, int] = {}
+    by_currency: dict[str, dict[uuid.UUID, int]] = {}
 
-    for payer_id, participant_id, share_cents in expense_rows:
-        balances[payer_id] = balances.get(payer_id, 0) + share_cents
-        balances[participant_id] = balances.get(participant_id, 0) - share_cents
+    for payer_id, participant_id, share_cents, currency in expense_rows:
+        bucket = by_currency.setdefault(currency, {})
+        bucket[payer_id] = bucket.get(payer_id, 0) + share_cents
+        bucket[participant_id] = bucket.get(participant_id, 0) - share_cents
 
-    for payer_id, payee_id, amount_cents in settlements:
-        balances[payer_id] = balances.get(payer_id, 0) + amount_cents
-        balances[payee_id] = balances.get(payee_id, 0) - amount_cents
+    for payer_id, payee_id, amount_cents, currency in settlements:
+        bucket = by_currency.setdefault(currency, {})
+        bucket[payer_id] = bucket.get(payer_id, 0) + amount_cents
+        bucket[payee_id] = bucket.get(payee_id, 0) - amount_cents
 
-    return balances
+    return by_currency
 
 
 def simplify_debts(
@@ -180,6 +222,7 @@ async def add_expense(
     shares: list[tuple[uuid.UUID, int]],
 ) -> ExpenseResult:
     """Create an expense with participants."""
+    currency = normalize_currency(currency)
     expense = await expense_repo.create_expense(
         session, group_id, payer_id, amount_cents, currency, description
     )
@@ -197,24 +240,66 @@ async def add_expense(
     )
 
 
-async def get_balances(session: AsyncSession, group_id: uuid.UUID) -> BalanceResult:
-    """Calculate net balances as simplified pairwise debts."""
+async def get_balances(
+    session: AsyncSession,
+    group_id: uuid.UUID,
+    *,
+    convert_to: str | None = None,
+    fx: FxProvider | None = None,
+) -> BalanceResult:
+    """Calculate net balances as simplified pairwise debts, per currency.
+
+    When `convert_to` is given, also return a consolidated single-currency
+    view with each per-currency net converted at the live FX rate.
+    """
     expense_rows = await expense_repo.get_expense_shares(session, group_id)
     settlements_raw = await expense_repo.get_settlements(session, group_id)
     settlement_tuples = [
-        (s.payer_id, s.payee_id, s.amount_cents) for s in settlements_raw
+        (s.payer_id, s.payee_id, s.amount_cents, s.currency) for s in settlements_raw
     ]
 
-    balances = calculate_balances(expense_rows, settlement_tuples)
-    debts = simplify_debts(balances)
+    by_currency = calculate_balances(expense_rows, settlement_tuples)
 
     members = await get_all_members(session, group_id)
     mmap = _member_map(members)
 
-    return BalanceResult(debts=[
-        {"debtor": mmap[d_id], "creditor": mmap[c_id], "amount_cents": amt}
-        for d_id, c_id, amt in debts
-    ])
+    debts_by_currency: dict[str, list[dict]] = {}
+    for currency, balances in by_currency.items():
+        simplified = simplify_debts(balances)
+        if not simplified:
+            continue
+        debts_by_currency[currency] = [
+            {"debtor": mmap[d_id], "creditor": mmap[c_id], "amount_cents": amt}
+            for d_id, c_id, amt in simplified
+        ]
+
+    converted: dict | None = None
+    if convert_to is not None:
+        target = normalize_currency(convert_to)
+        if fx is None:
+            raise ExpenseError("FX provider required to convert balances")
+        merged: dict[uuid.UUID, int] = {}
+        for currency, balances in by_currency.items():
+            for member_id, cents in balances.items():
+                if cents == 0:
+                    continue
+                if currency == target:
+                    converted_cents = cents
+                else:
+                    sign = -1 if cents < 0 else 1
+                    abs_converted, _ = await fx.convert(abs(cents), currency, target)
+                    converted_cents = sign * abs_converted
+                merged[member_id] = merged.get(member_id, 0) + converted_cents
+        simplified = simplify_debts(merged)
+        converted = {
+            "currency": target,
+            "debts": [
+                {"debtor": mmap[d_id], "creditor": mmap[c_id], "amount_cents": amt}
+                for d_id, c_id, amt in simplified
+            ],
+        }
+
+    return BalanceResult(debts_by_currency=debts_by_currency, converted=converted)
 
 
 async def record_settlement(
@@ -226,7 +311,10 @@ async def record_settlement(
     currency: str,
 ) -> SettlementResult:
     """Record a settlement payment."""
-    await expense_repo.create_settlement(session, group_id, payer_id, payee_id, amount_cents)
+    currency = normalize_currency(currency)
+    await expense_repo.create_settlement(
+        session, group_id, payer_id, payee_id, amount_cents, currency
+    )
 
     members = await get_all_members(session, group_id)
     mmap = _member_map(members)
@@ -235,14 +323,15 @@ async def record_settlement(
 
     await session.commit()
 
-    # Calculate remaining balance between these two members
+    # Remaining debt is computed within the settlement's own currency.
+    # Cross-currency settlement views land in commit 3 with the FX layer.
     expense_rows = await expense_repo.get_expense_shares(session, group_id)
     settlements_raw = await expense_repo.get_settlements(session, group_id)
     settlement_tuples = [
-        (s.payer_id, s.payee_id, s.amount_cents) for s in settlements_raw
+        (s.payer_id, s.payee_id, s.amount_cents, s.currency) for s in settlements_raw
     ]
-    balances = calculate_balances(expense_rows, settlement_tuples)
-    debts = simplify_debts(balances)
+    by_currency = calculate_balances(expense_rows, settlement_tuples)
+    debts = simplify_debts(by_currency.get(currency, {}))
 
     remaining_cents = 0
     for debtor_id, creditor_id, amt in debts:
@@ -308,6 +397,7 @@ async def update_expense(
     new_description: str | None = None,
     new_payer_id: uuid.UUID | None = None,
     new_shares: list[tuple[uuid.UUID, int]] | None = None,
+    fx: FxProvider | None = None,
 ) -> tuple[Expense, list[dict]]:
     """Update fields on an already-resolved expense.
 
@@ -334,6 +424,29 @@ async def update_expense(
         await expense_repo.update_description(session, expense, new_description)
 
     if new_currency is not None:
+        new_currency = normalize_currency(new_currency)
+        # Currency-only change: convert the amount at today's rate so the
+        # stored figure keeps its real-world meaning. If the caller also
+        # supplied a new amount, trust the caller's number verbatim.
+        if new_amount_cents is None and new_currency != expense.currency:
+            if fx is None:
+                raise ExpenseError("FX provider required to convert currency")
+            old_amount_cents = expense.amount_cents
+            converted_cents, _ = await fx.convert(
+                old_amount_cents, expense.currency, new_currency
+            )
+            changes.append({
+                "field": "amount",
+                "old_cents": old_amount_cents,
+                "new_cents": converted_cents,
+                "converted_from": expense.currency,
+            })
+            expense.amount_cents = converted_cents
+            await expense_repo.replace_expense_participants(
+                session,
+                expense.id,
+                _rescale_shares(expense, old_amount_cents, converted_cents),
+            )
         changes.append({"field": "currency", "old": expense.currency, "new": new_currency})
         expense.currency = new_currency
 

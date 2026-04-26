@@ -7,13 +7,18 @@ import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
+import fakeredis.aioredis
 import pytest
 import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+import piazza.db.models  # noqa: F401  -- registers all models with Base.metadata
+from piazza.config.settings import settings
 from piazza.core.encryption import encrypt, hash_phone
+from piazza.core.fx import set_fx_provider
+from piazza.db.base import Base
 from piazza.db.models.group import Group
 from piazza.db.models.member import Member
 
@@ -33,9 +38,15 @@ TEST_ENCRYPTION_KEY_B64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 @pytest.fixture(autouse=True)
 def _set_encryption_key(monkeypatch):
     """Ensure encryption_key is always set in tests."""
-    from piazza.config.settings import settings
-
     monkeypatch.setattr(settings, "encryption_key", TEST_ENCRYPTION_KEY_B64)
+
+
+@pytest.fixture(autouse=True)
+def _reset_fx_provider():
+    """Reset the module-level FX provider so test order can't leak state."""
+    set_fx_provider(None)
+    yield
+    set_fx_provider(None)
 
 
 @pytest_asyncio.fixture
@@ -52,9 +63,6 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
-
-    import piazza.db.models  # noqa: F401
-    from piazza.db.base import Base
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -73,8 +81,6 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture
 def redis_client():
     """Fake Redis instance for testing."""
-    import fakeredis.aioredis
-
     return fakeredis.aioredis.FakeRedis()
 
 

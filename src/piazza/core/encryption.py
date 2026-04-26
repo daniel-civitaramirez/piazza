@@ -4,6 +4,7 @@ import hashlib
 import os
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from sqlalchemy.orm.attributes import set_committed_value
 
 
 def encrypt(plaintext: str, key: bytes) -> bytes:
@@ -52,8 +53,6 @@ def validate_key(key: bytes) -> None:
 
 def set_decrypted(obj: object, attr: str, value: object) -> None:
     """Set a decrypted value on a model without marking it dirty in SQLAlchemy."""
-    from sqlalchemy.orm.attributes import set_committed_value
-
     set_committed_value(obj, attr, value)
 
 

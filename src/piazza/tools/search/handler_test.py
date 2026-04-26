@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from piazza.db.repositories import checklist as checklist_repo
 from piazza.db.repositories import expense as expense_repo
