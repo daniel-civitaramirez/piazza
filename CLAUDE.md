@@ -7,129 +7,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 export PATH="$HOME/.local/bin:$PATH"    # required before uv commands
 
-# Tests
-uv run pytest src/ -v                   # all tests
-uv run pytest src/piazza/tools/expenses/handler_test.py -v  # single file
-uv run pytest src/ -k "test_name" -v    # single test by name
-uv run pytest src/ --cov=src/piazza     # with coverage
+# Tests (pytest-asyncio in auto mode, files named *_test.py co-located with source)
+uv run pytest src/ -v                                                # all tests
+uv run pytest src/piazza/tools/expenses/handler_test.py -v           # single file
+uv run pytest src/ -k "test_name" -v                                 # by name
+uv run pytest src/ --cov=src/piazza                                  # with coverage
 
 # Lint & type check
-uv run ruff check src/
+uv run ruff check src/                  # line-length 100, target Python 3.12
 uv run mypy src/piazza/
 
-# Local services (requires Docker)
-docker compose up -d                    # redis + ollama
-docker compose -f docker-compose.prod.yml up -d  # full stack with evolution-api
+# Run the API locally (matches Dockerfile CMD)
+uv run uvicorn piazza.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Migrations (ENCRYPTION_KEY must be set — migration 009 encrypts existing data)
+# Local services (requires Docker)
+docker compose up -d                                       # redis + ollama only
+docker compose -f docker-compose.prod.yml up -d            # full stack with evolution-api + caddy
+
+# Migrations (ENCRYPTION_KEY must be set; some past migrations encrypt existing rows)
 uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "..."
 ```
 
-## Deployment
-
-Production runs via `docker-compose.prod.yml` with 7 services: `redis`, `ollama`, `evolution-postgres`, `evolution-api`, `app`, `worker`, `caddy`. Caddy handles auto-TLS and reverse-proxies to `app:8000`.
-
-### Required env vars
-
-- `SUPABASE_DB_URL` — asyncpg-prefixed Supavisor transaction-mode URL (port 6543, `?ssl=require`)
-- `ANTHROPIC_API_KEY`, `ENCRYPTION_KEY` (base64 32 bytes), `WEBHOOK_SECRET`, `REDIS_PASSWORD`
-- `EVO_API_KEY`, `EVO_DB_PASSWORD`, `EVO_INSTANCE_NAME`, `BOT_JID`, `DOMAIN`
-- Optional: `ADMIN_JID` (empty ⇒ auto-approve all groups), `SENTRY_DSN`, `OPENEXCHANGERATES_KEY`, `OLLAMA_MODEL` (override default `qwen3.5:4b`)
-
-### Env vars set by compose (do NOT put in `.env`)
-
-`EVO_API_URL`, `OLLAMA_URL`, `REDIS_URL`, `INJECTION_PATTERNS_PATH` — overridden to container hostnames by `docker-compose.prod.yml`.
-
-### Supabase / asyncpg constraint
-
-Connections go through Supavisor transaction mode (port 6543), which does not support prepared statements. `engine.py` sets `statement_cache_size=0` and `prepared_statement_cache_size=0` in `connect_args`. Do not use port 5432 or remove these flags.
-
-### Files not in git
-
-- `config/injection_patterns.json` — L1/L2 regex patterns, deployed out-of-band (scp). Both `app` and `worker` containers mount it read-only.
-- `docs/mvp/piazza_config.md` — deployment secrets and infra references.
-
-### Group approval
-
-`Group.approval_status` is `pending` | `approved`. When `ADMIN_JID` is unset, new groups auto-approve. Otherwise approvals are flipped manually via SQL in Supabase.
-
-### Sentry
-
-`main.py` auto-initializes `sentry_sdk` when `SENTRY_DSN` is set. A `before_send` hook scrubs PII (message text, phone numbers, display names) from error reports.
-
-### Health endpoint
-
-`GET /health` reports per-service status (DB, Redis, Ollama, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until the Evolution API instance is linked via QR.
-
-### Deploying code and/or DB changes to the VPS
-
-Image layout: `./src` is bind-mounted into `app` and `worker` (compose), but `alembic/`, `pyproject.toml`, and `uv.lock` are COPYed at build time. This dictates which deploys need a rebuild.
-
-Match the procedure to the change:
-
-**1. Source-only change (no schema, no deps)** — fastest path, no rebuild:
-
-```bash
-ssh -i ~/.ssh/piazza_hetzner deploy@<vps-ip> && cd /opt/piazza
-git pull origin main
-docker compose -f docker-compose.prod.yml restart app worker
-```
-
-**2. Dependency change (`pyproject.toml` / `uv.lock`)** — rebuild required:
-
-```bash
-git pull origin main
-docker compose -f docker-compose.prod.yml build app worker
-docker compose -f docker-compose.prod.yml up -d app worker
-```
-
-**3. DB migration (with or without source changes)** — rebuild required so the new migration file lands in the image, then migrate **before** swapping containers to keep zero downtime:
-
-```bash
-git pull origin main
-docker compose -f docker-compose.prod.yml build app worker
-
-# One-shot container from the freshly built image; --rm auto-deletes.
-# Uses the same Supavisor URL the app uses — alembic/env.py sets the
-# statement_cache_size flags that make this work over port 6543.
-docker compose -f docker-compose.prod.yml run --rm app uv run alembic current
-docker compose -f docker-compose.prod.yml run --rm app uv run alembic upgrade head
-
-# Only after migration succeeds, swap containers:
-docker compose -f docker-compose.prod.yml up -d app worker
-```
-
-For migrations that backfill existing rows (e.g. defaulting a new column to a non-empty value for active groups), put the backfill in `upgrade()` — Alembic wraps the transaction. Verify with a `SELECT` in Supabase before swapping containers.
-
-**4. `.env` change** — recreate (not restart) so compose re-reads the file:
-
-```bash
-docker compose -f docker-compose.prod.yml up -d app worker
-```
-
-**Things to never do**
-
-- Don't `docker compose down` — it stops Caddy + Evolution API and breaks the WhatsApp session (requires QR re-link).
-- Don't run alembic against a host-installed `uv`/Python — host may not have them; always go through the container.
-- Don't override `SUPABASE_DB_URL` to the session-mode endpoint — `alembic/env.py` already handles Supavisor transaction mode.
-- Don't swap containers before running the migration when adding a new schema-dependent column — the new code will crash on the missing column until the migration completes.
-
-**After any deploy**, smoke test:
-
-```bash
-docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs app worker --tail 50
-curl -fsS https://<DOMAIN>/health | jq
-```
-
-Other VPS-specific commands (SSH key, paths, Supabase project ID, Evolution API tunnel) live in the gitignored `docs/mvp/piazza_config.md`.
+Tests do not require `ENCRYPTION_KEY` in the env — `src/piazza/conftest.py` monkeypatches `settings.encryption_key` to a fixed all-zero key (`TEST_ENCRYPTION_KEY_B64`) for every test session. If you create members directly in a test, encrypt their `display_name` and `wa_id_encrypted` with `TEST_ENCRYPTION_KEY` (the raw 32-byte form) — see `conftest.py:126-127` for the pattern.
 
 ## Architecture
 
-**WhatsApp group productivity agent** — expense tracking, reminders, itinerary, notes, and group status via WhatsApp.
+WhatsApp group productivity agent: expense tracking, reminders, itinerary, notes, checklists, search, and group status, all driven from natural-language messages.
 
-### Message Flow
+### Message flow
 
 ```
 WhatsApp → Evolution API → /webhook (HMAC verify) → parse_webhook()
@@ -140,120 +46,123 @@ WhatsApp → Evolution API → /webhook (HMAC verify) → parse_webhook()
   → tool execution → WhatsApp response
 ```
 
-### Two-Tier LLM Agents
+### Two-tier LLM agents
 
-Both tiers are full agents with tool use (not classifiers). They share `BaseAgent._execute()` for the tool loop and differ only in LLM API calls.
+Both tiers are full agents with tool use, not classifiers. They share `BaseAgent._execute()` for the tool loop and differ only in the LLM API call.
 
-- **OpenSourceAgent**: Ollama (qwen3.5:4b), OpenAI-compatible format, 10s timeout
-- **ClaudeAgent**: Anthropic (haiku-4-5), native format, 15s timeout
-- **Fallback logic** lives in `workers/process_message.py:_run_agent()`, not in agent classes
-- **Circuit breaker**: 3 failures in 120s → 600s cooldown on Ollama
-- **Disable Ollama tier entirely**: set `OPENSOURCE_AGENT_ENABLED=false` to skip straight to Claude (useful when Ollama is unavailable or unreliable on a given host). Default is `true`.
+- **OpenSourceAgent**: Ollama (default `qwen3.5:4b`, override via `OLLAMA_MODEL`), OpenAI-compatible format, 10s timeout.
+- **ClaudeAgent**: Anthropic (haiku-4-5), native format, 15s timeout.
+- **Fallback logic** lives in `workers/process_message.py:_run_agent()`, not in agent classes.
+- **Circuit breaker**: 3 Ollama failures in 120s trip a 600s cooldown.
+- **Disable Ollama tier entirely**: set `OPENSOURCE_AGENT_ENABLED=false` to skip straight to Claude (default `true`). Useful when Ollama is unavailable on a given host.
 
-### Tool Pattern
+### Tool pattern (every tool follows this layering)
 
-Tools follow a consistent layered pattern:
-- **handler.py**: Entry point — takes `(session, group_id, member_id, entities)` → returns `dict`
-- **service.py**: Business logic, returns model objects or raises exceptions
-- **registry.py**: Maps tool names to handlers, defines tool schemas in Anthropic format. `execute_tool` JSON-serializes handler dicts for the LLM.
-- **schemas.py**: `Entities` Pydantic model with optional fields matching tool input schemas
+- `db/models/<name>.py` — SQLAlchemy model. User-content columns are `LargeBinary` (encrypted at rest).
+- `db/repositories/<name>.py` — data access. Encrypts on write, decrypts on read. Callers always see plaintext. Text search is fetch-all + Python substring match (no ILIKE on ciphertext).
+- `tools/<name>/service.py` — business logic. Returns model objects or raises `NotFoundError(entity, number=, query=)`. Must not import `settings` or `encrypt` directly; if mutating an encrypted column, go through the repo.
+- `tools/<name>/handler.py` — entry point `(session, group_id, member_id, entities) → dict`. Catches `NotFoundError` and builds structured response dicts.
+- `tools/registry.py` — maps tool name → handler, defines schema in Anthropic tool format. `execute_tool` JSON-serializes handler dicts for the LLM.
+- `tools/schemas.py` — `Entities` Pydantic model with optional fields matching tool input schemas.
 
-### Structured Responses (Language-Agnostic)
+Existing tools: `expenses/`, `reminders/`, `itinerary/`, `notes/`, `checklist/`, `search/`, `status.py`.
 
-Handlers return structured dicts (not English strings). The LLM receives JSON tool results and generates natural-language responses in the user's language. No formatters — the LLM handles all i18n.
+### Structured, language-agnostic responses
 
-Every handler dict has a `status` key: `"ok"`, `"empty"`, `"not_found"`, `"ambiguous"`, `"error"`, or `"list"`.
+Handlers return structured dicts, never English strings. The LLM receives JSON tool results and generates the natural-language reply in the user's language. No formatters, no i18n in code.
 
-Services return model objects; handlers convert to dicts. Services raise `NotFoundError(entity, number=, query=)` for missing items — handlers catch and build `{"status": "not_found", ...}` dicts.
+Every handler dict has a `status` key: `"ok"` | `"empty"` | `"not_found"` | `"ambiguous"` | `"error"` | `"list"`. Use the builders in `tools/responses.py` (`ok_response`, `list_response`, etc.) — don't hand-roll.
 
-### Expense Splits
+### Item identification (mutation tools)
 
-Expenses use a unified `participants: [{name, amount}]` format for both even and custom splits. The LLM always computes per-person amounts.
+Delete/update/cancel handlers identify the target two ways:
+- `item_number` — 1-indexed position from the tool's `list_*`/`show_*` output. Always unambiguous.
+- `description` — substring match (Python-side, post-decryption). Returns disambiguation bullets if more than one matches.
 
-- **`add_expense` / `update_expense`**: `participants` is `[{name: str, amount: number}]` — each person who owes the payer and how much. Payer is never in participants.
-- **`settle_expense`**: `participants` stays `list[str]` (single payee name). Unaffected.
-- **Payer share**: computed by handler as `total - sum(participant_amounts)`. Must be >= 0.
-- **"everyone"**: handler expands to all active members except payer, splits evenly.
-- **Amount-only updates**: don't touch shares. The LLM asks a clarifying question for ambiguous redistributions.
+Handlers branch `item_number` first, `description` fallback, error if neither. `*_by_number` service functions reuse the same repo query + ordering as the corresponding list function.
 
-### Item Identification
+### Expense splits
 
-Mutation tools (delete, update, cancel) identify entries two ways:
-- **`item_number`**: Position from the tool's `list_*`/`show_*` output (1-indexed). Always unambiguous.
-- **`description`**: Substring match (Python-side, post-decryption). Returns disambiguation (bullets, no numbers) if >1 match.
+`add_expense` / `update_expense` use a unified `participants: [{name, amount}]` shape for both even and custom splits — the LLM always computes per-person amounts. Payer is never in `participants`. The handler computes payer share as `total - sum(participant_amounts)` and rejects if negative. `"everyone"` expands to all active members except payer, split evenly. Amount-only updates don't touch shares; the LLM asks a clarifying question for ambiguous redistributions. `settle_expense` keeps `participants: list[str]` (single payee).
 
-Handlers branch: `item_number` first → `description` fallback → error if neither.
-`*_by_number` service functions reuse the same repo query + ordering as the list function.
+### Encryption at rest
 
-### Layer Separation
+All user-generated content is encrypted at the application layer using AES-256-GCM (`core/encryption.py`) before hitting Postgres. Supabase only ever sees opaque bytes.
+
+Encrypted columns: `Expense.description`, `Reminder.message`, `ItineraryItem.title/location/notes`, `Note.content/tag`, `MessageLog.content`, `Member.display_name`, `Member.wa_id_encrypted`, `Group.name_encrypted`. Add a new encrypted column? It must be `LargeBinary` and the repo must encrypt on write / decrypt on read.
+
+Helpers in `core/encryption.py`: `encrypt`, `decrypt` (idempotent — safe for SQLAlchemy identity-map reuse), `encrypt_nullable`, `decrypt_nullable`, `set_decrypted` (sets value without marking the row dirty), `validate_key`.
+
+Message-log retention: after each message, entries beyond `conversation_context_limit * message_log_retention_multiplier` (default 10 × 2 = 20) are pruned per group.
+
+### Security pipeline
+
+- L1 (`workers/security/sanitizer.py`): regex patterns for XSS, SQL injection, command injection.
+- L2 (`workers/security/guard.py`): ML/heuristic screening via llm-guard with risk scoring.
+- Blocked messages logged via structured logging only — no DB table, no PII.
+
+### Rate limiting
+
+Per-group sorted set in Redis, checked in `process_message_job` before the per-group lock. Default `group_rate_limit_per_minute = 5`. Rate-limited messages return a static response without invoking the LLM, so no token cost.
+
+### Layer separation (don't cross these)
 
 ```
-db/models/       → SQLAlchemy models
-db/repositories/  → Data access (get_, create_, delete_, find_, get_or_create_)
-tools/*/service   → Business logic
-tools/*/handler   → Tool entry points
-messaging/        → WhatsApp transport (webhook, parser, client)
-workers/          → arq jobs, message processing pipeline
-agent/            → LLM agent implementations
+db/models/         → SQLAlchemy models
+db/repositories/   → data access (get_, create_, delete_, find_, get_or_create_; domain verbs cancel_, snooze_, deactivate_)
+tools/*/service    → business logic
+tools/*/handler    → tool entry points
+messaging/         → WhatsApp transport (webhook, parser, client, group_sync)
+workers/           → arq jobs, security pipeline, message processing
+agent/             → LLM agent implementations
+admin/             → operational notifications (admin/notify.py)
 ```
 
-### Encryption at Rest
+## Deployment
 
-All user-generated content is encrypted at the application level before storage using AES-256-GCM (`core/encryption.py`). Supabase sees only opaque bytes.
+Production runs `docker-compose.prod.yml` with 7 services: `redis`, `ollama`, `evolution-postgres`, `evolution-api`, `app`, `worker`, `caddy`. Caddy handles auto-TLS and reverse-proxies to `app:8000`. Image layout: `./src` is bind-mounted into `app` and `worker`, but `alembic/`, `pyproject.toml`, and `uv.lock` are COPYed at build time — that dictates which deploys need a rebuild.
 
-**Encrypted columns**: `Expense.description`, `Reminder.message`, `ItineraryItem.title/location/notes`, `Note.content/tag`, `MessageLog.content`, `Member.display_name`, `Member.wa_id_encrypted`, `Group.name_encrypted`
+VPS-specific runbook (SSH key, paths, Supabase project ID, the four deploy procedures by change type, post-deploy smoke tests, things to never do) lives in the gitignored `docs/mvp/piazza_config.md`. Read it before deploying.
 
-**Repository pattern**: Repos encrypt on write, decrypt on read. Callers (services, handlers) always work with plaintext strings. Text search uses fetch-all + Python substring match (no ILIKE on ciphertext).
+### The two constraints that bite
 
-**Key helpers** in `core/encryption.py`: `encrypt`, `decrypt` (idempotent — safe for SQLAlchemy identity map reuse), `encrypt_nullable`, `decrypt_nullable`, `set_decrypted` (sets value without marking dirty in SQLAlchemy), `validate_key`.
+- **Supavisor transaction mode (port 6543) does not support prepared statements.** `engine.py` and `alembic/env.py` both set `statement_cache_size=0` and `prepared_statement_cache_size=0` in `connect_args`. Don't use port 5432, don't remove these flags.
+- **Never `docker compose down` on prod** — it stops Caddy and Evolution API, which kills the WhatsApp session and forces a QR re-link. Use `restart` or `up -d` to swap, never `down`.
 
-**Message log retention**: After each message, entries beyond `conversation_context_limit * message_log_retention_multiplier` (default 10 * 2 = 20) are pruned per group. Configurable in settings.
+### Required env vars
 
-### Rate Limiting
+- `SUPABASE_DB_URL` — asyncpg-prefixed Supavisor transaction-mode URL (port 6543, `?ssl=require`)
+- `ANTHROPIC_API_KEY`, `ENCRYPTION_KEY` (base64 32 bytes), `WEBHOOK_SECRET`, `REDIS_PASSWORD`
+- `EVO_API_KEY`, `EVO_DB_PASSWORD`, `EVO_INSTANCE_NAME`, `BOT_JID`, `DOMAIN`
+- Optional: `ADMIN_JID` (empty ⇒ auto-approve all groups), `SENTRY_DSN`, `OPENEXCHANGERATES_KEY`, `OLLAMA_MODEL` (override `qwen3.5:4b`), `OPENSOURCE_AGENT_ENABLED` (`false` to skip Ollama tier)
 
-Per-group rate limiting via Redis sorted set in `process_message_job`. Default: `group_rate_limit_per_minute = 5`. Checked before the per-group lock — rate-limited messages return a static response without calling the LLM, so no cost is incurred. Configurable in settings.
+`EVO_API_URL`, `OLLAMA_URL`, `REDIS_URL`, `INJECTION_PATTERNS_PATH` are set by compose to container hostnames — do NOT put them in `.env`.
 
-### Security Pipeline
+Files not in git that the running app needs: `config/injection_patterns.json` (L1/L2 regex patterns, scp'd out-of-band, mounted read-only into both `app` and `worker`); `docs/mvp/piazza_config.md` (deployment secrets and infra references).
 
-- **L1** (`workers/security/sanitizer.py`): Regex patterns for XSS, SQL injection, command injection
-- **L2** (`workers/security/guard.py`): ML/heuristic screening via llm-guard with risk scoring
-- Blocked messages logged via structured logging (no DB table — PII-free)
+### Group approval & health
 
-## Adding a New Tool
+`Group.approval_status` is `pending` | `approved`. When `ADMIN_JID` is unset, new groups auto-approve; otherwise flip them manually via SQL in Supabase.
 
-New tools must follow the existing patterns across all layers:
+`GET /health` reports per-service status (DB, Redis, Ollama, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until Evolution API is QR-linked.
 
-### File structure
-Create `tools/<name>/` with: `handler.py`, `service.py`, `handler_test.py`, `service_test.py`. Add the repository in `db/repositories/<name>.py` with co-located `<name>_test.py`.
+`main.py` auto-initializes `sentry_sdk` when `SENTRY_DSN` is set. The `before_send` hook scrubs PII (message text, phone numbers, display names) from error reports.
 
-### Model → Repository → Service → Handler
+## Adding a new tool
 
-1. **Model** (`db/models/`): Any user-content column must be `LargeBinary` (encrypted at rest). Non-content columns (IDs, timestamps, status flags, numeric amounts) stay as their native types.
-2. **Repository** (`db/repositories/`): Encrypt user-content fields on write using `encrypt`/`encrypt_nullable` from `core/encryption.py`. Decrypt on read using `decrypt`/`decrypt_nullable` + `set_decrypted` (avoids SQLAlchemy dirty tracking). Text search replaces ILIKE with fetch-all + Python substring match. Repos accept and return plaintext strings — encryption is internal.
-3. **Service** (`tools/*/service.py`): Business logic only. Receives/returns plaintext via repos. Raises `NotFoundError(entity, number=, query=)` for missing items. Must not import `settings` or `encrypt` directly — if a service mutates an encrypted column on a model object, it must go through the repo or encrypt inline.
-4. **Handler** (`tools/*/handler.py`): Entry point with signature `(session, group_id, member_id, entities) → dict`. Catches `NotFoundError` and builds structured response dicts. Uses `item_number` first, `description` fallback for mutations.
-
-### Registry
-Add the tool to `tools/registry.py`: map tool name → handler function, define the schema in Anthropic tool format. The `Entities` model in `tools/schemas.py` must include any new input fields.
-
-### Responses
-Use builders from `tools/responses.py`: `ok_response`, `list_response`, `empty_response`, `not_found_response`, `ambiguous_response`, `error_response`. Every handler dict must have a `status` key.
-
-### Logging
-Log operational fields only (event name, counts, durations, action types). Never log PII: no JIDs, phone numbers, display names, message content, or user-generated text. Use `group_id` (UUID) for correlation where available.
-
-### Testing
-Co-located `*_test.py` files. All tests async. Use `db_session` and `sample_group` fixtures from `conftest.py`. Tests that create members directly must encrypt `display_name` with `TEST_ENCRYPTION_KEY`. Repository tests verify round-trip encryption (write → read → assert plaintext). Handler tests go through the full stack (no DB mocking).
-
-### Migration
-Add an alembic migration for any schema changes. Encrypted columns require a data migration that reads plaintext, encrypts with `core/encryption.py`, and writes back. `ENCRYPTION_KEY` must be set when running migrations.
+1. **Model** (`db/models/`) — user-content columns must be `LargeBinary`. IDs/timestamps/enums/numbers stay native.
+2. **Repository** (`db/repositories/`) with co-located `*_test.py`. Encrypt on write via `encrypt`/`encrypt_nullable`. Decrypt on read via `decrypt`/`decrypt_nullable` + `set_decrypted` (avoids dirty tracking). Round-trip encryption tests required.
+3. **Service** (`tools/<name>/service.py`) — business logic only. Plaintext in/out via repos. Raise `NotFoundError(entity, number=, query=)` for missing items. Add a `*_by_number` variant that reuses the list query + ordering.
+4. **Handler** (`tools/<name>/handler.py`) — `(session, group_id, member_id, entities) → dict`. Catch `NotFoundError`, build via `tools/responses.py` builders. `item_number` first, `description` fallback for mutations.
+5. **Registry** — add to `tools/registry.py` (handler map + Anthropic tool schema). Add new fields to `Entities` in `tools/schemas.py`.
+6. **Migration** — alembic revision for any schema change. Encrypted columns require a data migration that reads plaintext, encrypts with `core/encryption.py`, and writes back. `ENCRYPTION_KEY` must be set when running migrations. Backfills go in `upgrade()` (Alembic wraps the txn); verify with `SELECT` before swapping containers.
+7. **Tests** — handler tests go through the full stack (no DB mocking); use `db_session` and `sample_group` fixtures from `conftest.py` (Alice/Bob/Charlie). All tests async.
+8. **Logging** — operational fields only (event name, counts, durations, action types). Never log JIDs, phone numbers, display names, message content, or any user-generated text. Use `group_id` (UUID) for correlation.
 
 ## Conventions
 
-- **Test files**: `*_test.py` co-located with source (e.g., `handler_test.py` next to `handler.py`)
-- **Test fixtures** in `src/piazza/conftest.py`: `db_session` (in-memory SQLite), `sample_group` (Alice/Bob/Charlie), `redis_client` (fakeredis)
-- **All tests are async** (`pytest-asyncio` with `asyncio_mode="auto"`)
-- **Private helpers** at top of files, **public API** at bottom
-- **Ruff**: line-length 100, target Python 3.12
-- **Singletons** for agents (`agent/__init__.py`) and WhatsApp client (`messaging/whatsapp/__init__.py`)
-- **Domain verbs** for repo functions: `cancel_`, `snooze_`, `deactivate_` (not just CRUD)
+- Test files: `*_test.py` co-located with source. All tests async (`pytest-asyncio` `asyncio_mode="auto"`).
+- Test fixtures in `src/piazza/conftest.py`: `db_session` (in-memory SQLite), `sample_group` (Alice/Bob/Charlie), `redis_client` (fakeredis).
+- Private helpers at top of file, public API at bottom.
+- Singletons: agents (`agent/__init__.py`), WhatsApp client (`messaging/whatsapp/__init__.py`).
+- Repo function verbs: `get_`, `create_`, `delete_`, `find_`, `get_or_create_`, plus domain verbs `cancel_`, `snooze_`, `deactivate_`.
