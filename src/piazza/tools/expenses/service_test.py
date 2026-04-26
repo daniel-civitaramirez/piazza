@@ -61,31 +61,41 @@ class TestBalances:
 
     def test_single_expense(self):
         a, b, c = self._ids(3)
-        rows = [(a, a, 1000), (a, b, 1000), (a, c, 1000)]
+        rows = [(a, a, 1000, "EUR"), (a, b, 1000, "EUR"), (a, c, 1000, "EUR")]
         balances = calculate_balances(rows, [])
-        assert balances[a] == 2000
-        assert balances[b] == -1000
-        assert balances[c] == -1000
+        assert balances["EUR"][a] == 2000
+        assert balances["EUR"][b] == -1000
+        assert balances["EUR"][c] == -1000
 
     def test_multiple_expenses(self):
         a, b = self._ids(2)
-        rows = [(a, a, 1000), (a, b, 1000)]
-        rows += [(b, a, 500), (b, b, 500)]
+        rows = [(a, a, 1000, "EUR"), (a, b, 1000, "EUR")]
+        rows += [(b, a, 500, "EUR"), (b, b, 500, "EUR")]
         balances = calculate_balances(rows, [])
-        assert balances[a] == 500
-        assert balances[b] == -500
+        assert balances["EUR"][a] == 500
+        assert balances["EUR"][b] == -500
 
     def test_after_settlement(self):
         a, b = self._ids(2)
-        rows = [(a, a, 500), (a, b, 500)]
-        settlements = [(b, a, 500)]
+        rows = [(a, a, 500, "EUR"), (a, b, 500, "EUR")]
+        settlements = [(b, a, 500, "EUR")]
         balances = calculate_balances(rows, settlements)
-        assert balances[a] == 0
-        assert balances[b] == 0
+        assert balances["EUR"][a] == 0
+        assert balances["EUR"][b] == 0
 
     def test_no_expenses(self):
         balances = calculate_balances([], [])
         assert balances == {}
+
+    def test_currencies_partitioned(self):
+        a, b = self._ids(2)
+        rows = [
+            (a, a, 1000, "EUR"), (a, b, 1000, "EUR"),
+            (b, a, 500, "USD"), (b, b, 500, "USD"),
+        ]
+        balances = calculate_balances(rows, [])
+        assert balances["EUR"] == {a: 1000, b: -1000}
+        assert balances["USD"] == {a: -500, b: 500}
 
 
 # ---------- Simplify debts (greedy min-flow) ----------
@@ -182,9 +192,30 @@ class TestExpenseServiceDB:
             ),
         )
         result = await service.get_balances(db_session, sample_group.group_id)
-        assert len(result.debts) > 0
-        names = {d["debtor"] for d in result.debts} | {d["creditor"] for d in result.debts}
+        assert "EUR" in result.debts_by_currency
+        eur_debts = result.debts_by_currency["EUR"]
+        assert len(eur_debts) > 0
+        names = {d["debtor"] for d in eur_debts} | {d["creditor"] for d in eur_debts}
         assert "Alice" in names
+
+    @pytest.mark.asyncio
+    async def test_balance_partitions_by_currency(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "lunch",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 3000,
+            ),
+        )
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.bob.id,
+            2000, "USD", "snacks",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id], 2000,
+            ),
+        )
+        result = await service.get_balances(db_session, sample_group.group_id)
+        assert set(result.debts_by_currency.keys()) == {"EUR", "USD"}
 
     @pytest.mark.asyncio
     async def test_resolve_by_number_not_found(self, db_session, sample_group):

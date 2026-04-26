@@ -121,7 +121,10 @@ AGENT_TOOLS: list[dict] = [
     },
     {
         "name": "get_balances",
-        "description": "Show who owes whom in the group.",
+        "description": (
+            "Show who owes whom in the group. Returns debts grouped by"
+            " currency so mixed-currency groups stay mathematically honest."
+        ),
         "input_schema": {"type": "object", "properties": {}},
     },
     {

@@ -55,9 +55,13 @@ class SettlementResult:
 
 @dataclass
 class BalanceResult:
-    """Data returned from balance queries."""
+    """Data returned from balance queries.
 
-    debts: list[dict]  # [{"debtor": str, "creditor": str, "amount_cents": int}]
+    `debts_by_currency` maps an ISO-4217 code to its simplified debt list.
+    Each entry: {"debtor": str, "creditor": str, "amount_cents": int}.
+    """
+
+    debts_by_currency: dict[str, list[dict]]
 
 
 def expense_to_dict(exp: Expense, number: int | None = None) -> dict:
@@ -100,27 +104,29 @@ def calculate_even_split(amount_cents: int, num_participants: int) -> list[int]:
 
 
 def calculate_balances(
-    expense_rows: list[tuple[uuid.UUID, uuid.UUID, int]],
-    settlements: list[tuple[uuid.UUID, uuid.UUID, int]],
-) -> dict[uuid.UUID, int]:
-    """Calculate net balance per member.
+    expense_rows: list[tuple[uuid.UUID, uuid.UUID, int, str]],
+    settlements: list[tuple[uuid.UUID, uuid.UUID, int, str]],
+) -> dict[str, dict[uuid.UUID, int]]:
+    """Calculate net balance per member, partitioned by currency.
 
     Positive = owed money (creditor). Negative = owes money (debtor).
 
-    expense_rows: (payer_id, participant_member_id, share_cents)
-    settlements: (payer_id, payee_id, amount_cents)
+    expense_rows: (payer_id, participant_member_id, share_cents, currency)
+    settlements: (payer_id, payee_id, amount_cents, currency)
     """
-    balances: dict[uuid.UUID, int] = {}
+    by_currency: dict[str, dict[uuid.UUID, int]] = {}
 
-    for payer_id, participant_id, share_cents in expense_rows:
-        balances[payer_id] = balances.get(payer_id, 0) + share_cents
-        balances[participant_id] = balances.get(participant_id, 0) - share_cents
+    for payer_id, participant_id, share_cents, currency in expense_rows:
+        bucket = by_currency.setdefault(currency, {})
+        bucket[payer_id] = bucket.get(payer_id, 0) + share_cents
+        bucket[participant_id] = bucket.get(participant_id, 0) - share_cents
 
-    for payer_id, payee_id, amount_cents in settlements:
-        balances[payer_id] = balances.get(payer_id, 0) + amount_cents
-        balances[payee_id] = balances.get(payee_id, 0) - amount_cents
+    for payer_id, payee_id, amount_cents, currency in settlements:
+        bucket = by_currency.setdefault(currency, {})
+        bucket[payer_id] = bucket.get(payer_id, 0) + amount_cents
+        bucket[payee_id] = bucket.get(payee_id, 0) - amount_cents
 
-    return balances
+    return by_currency
 
 
 def simplify_debts(
@@ -201,23 +207,29 @@ async def add_expense(
 
 
 async def get_balances(session: AsyncSession, group_id: uuid.UUID) -> BalanceResult:
-    """Calculate net balances as simplified pairwise debts."""
+    """Calculate net balances as simplified pairwise debts, per currency."""
     expense_rows = await expense_repo.get_expense_shares(session, group_id)
     settlements_raw = await expense_repo.get_settlements(session, group_id)
     settlement_tuples = [
-        (s.payer_id, s.payee_id, s.amount_cents) for s in settlements_raw
+        (s.payer_id, s.payee_id, s.amount_cents, s.currency) for s in settlements_raw
     ]
 
-    balances = calculate_balances(expense_rows, settlement_tuples)
-    debts = simplify_debts(balances)
+    by_currency = calculate_balances(expense_rows, settlement_tuples)
 
     members = await get_all_members(session, group_id)
     mmap = _member_map(members)
 
-    return BalanceResult(debts=[
-        {"debtor": mmap[d_id], "creditor": mmap[c_id], "amount_cents": amt}
-        for d_id, c_id, amt in debts
-    ])
+    debts_by_currency: dict[str, list[dict]] = {}
+    for currency, balances in by_currency.items():
+        simplified = simplify_debts(balances)
+        if not simplified:
+            continue
+        debts_by_currency[currency] = [
+            {"debtor": mmap[d_id], "creditor": mmap[c_id], "amount_cents": amt}
+            for d_id, c_id, amt in simplified
+        ]
+
+    return BalanceResult(debts_by_currency=debts_by_currency)
 
 
 async def record_settlement(
@@ -229,7 +241,10 @@ async def record_settlement(
     currency: str,
 ) -> SettlementResult:
     """Record a settlement payment."""
-    await expense_repo.create_settlement(session, group_id, payer_id, payee_id, amount_cents)
+    currency = normalize_currency(currency)
+    await expense_repo.create_settlement(
+        session, group_id, payer_id, payee_id, amount_cents, currency
+    )
 
     members = await get_all_members(session, group_id)
     mmap = _member_map(members)
@@ -238,14 +253,15 @@ async def record_settlement(
 
     await session.commit()
 
-    # Calculate remaining balance between these two members
+    # Remaining debt is computed within the settlement's own currency.
+    # Cross-currency settlement views land in commit 3 with the FX layer.
     expense_rows = await expense_repo.get_expense_shares(session, group_id)
     settlements_raw = await expense_repo.get_settlements(session, group_id)
     settlement_tuples = [
-        (s.payer_id, s.payee_id, s.amount_cents) for s in settlements_raw
+        (s.payer_id, s.payee_id, s.amount_cents, s.currency) for s in settlements_raw
     ]
-    balances = calculate_balances(expense_rows, settlement_tuples)
-    debts = simplify_debts(balances)
+    by_currency = calculate_balances(expense_rows, settlement_tuples)
+    debts = simplify_debts(by_currency.get(currency, {}))
 
     remaining_cents = 0
     for debtor_id, creditor_id, amt in debts:

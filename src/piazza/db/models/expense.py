@@ -77,6 +77,7 @@ class Settlement(Base):
         ForeignKey("members.id"), nullable=False
     )
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -185,8 +185,18 @@ class TestSettlements:
     async def test_create_and_get(self, db_session, sample_group):
         await create_settlement(
             db_session, sample_group.group_id,
-            sample_group.bob.id, sample_group.alice.id, 500,
+            sample_group.bob.id, sample_group.alice.id, 500, "EUR",
         )
         settlements = await get_settlements(db_session, sample_group.group_id)
         assert len(settlements) == 1
         assert settlements[0].amount_cents == 500
+        assert settlements[0].currency == "EUR"
+
+    @pytest.mark.asyncio
+    async def test_currency_persisted(self, db_session, sample_group):
+        await create_settlement(
+            db_session, sample_group.group_id,
+            sample_group.bob.id, sample_group.alice.id, 2200, "USD",
+        )
+        settlements = await get_settlements(db_session, sample_group.group_id)
+        assert settlements[0].currency == "USD"

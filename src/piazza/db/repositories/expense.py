@@ -164,10 +164,15 @@ async def update_description(
 
 async def get_expense_shares(
     session: AsyncSession, group_id: uuid.UUID
-) -> list[tuple[uuid.UUID, uuid.UUID, int]]:
-    """Get (payer_id, participant_member_id, share_cents) for all active expenses."""
+) -> list[tuple[uuid.UUID, uuid.UUID, int, str]]:
+    """Get (payer_id, participant_member_id, share_cents, currency) for active expenses."""
     result = await session.execute(
-        select(Expense.payer_id, ExpenseParticipant.member_id, ExpenseParticipant.share_cents)
+        select(
+            Expense.payer_id,
+            ExpenseParticipant.member_id,
+            ExpenseParticipant.share_cents,
+            Expense.currency,
+        )
         .join(ExpenseParticipant, Expense.id == ExpenseParticipant.expense_id)
         .where(Expense.group_id == group_id, Expense.is_deleted == False)  # noqa: E712
     )
@@ -190,6 +195,7 @@ async def create_settlement(
     payer_id: uuid.UUID,
     payee_id: uuid.UUID,
     amount_cents: int,
+    currency: str,
 ) -> Settlement:
     """Record a settlement."""
     settlement = Settlement(
@@ -197,6 +203,7 @@ async def create_settlement(
         payer_id=payer_id,
         payee_id=payee_id,
         amount_cents=amount_cents,
+        currency=currency,
     )
     session.add(settlement)
     await session.flush()

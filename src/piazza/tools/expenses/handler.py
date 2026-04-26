@@ -211,9 +211,16 @@ async def handle_expense_add(
 async def handle_expense_balance(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> dict:
-    """Show who owes what."""
+    """Show who owes what.
+
+    Default view returns debts grouped by currency. Cross-currency
+    consolidation lands in commit 3 with the FX layer.
+    """
     result = await service.get_balances(session, group_id)
-    return ok_response(Action.GET_BALANCES, debts=result.debts)
+    return ok_response(
+        Action.GET_BALANCES,
+        debts_by_currency=result.debts_by_currency,
+    )
 
 
 async def handle_expense_settle(
