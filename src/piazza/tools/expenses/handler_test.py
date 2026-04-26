@@ -123,6 +123,66 @@ class TestHandleExpenseAdd:
         assert result["reason"] == "participants_exceed_total"
 
     @pytest.mark.asyncio
+    async def test_decimal_safe_rounding(self, db_session, sample_group):
+        """Custom split with values that drift under IEEE-754 still sums correctly."""
+        # 0.1 + 0.2 in float = 0.30000000000000004; total 0.30 must work cleanly
+        entities = Entities(
+            amount=0.30, paid_by="Alice", description="rounding probe",
+            participants=[
+                {"name": "Bob", "amount": 0.10},
+                {"name": "Charlie", "amount": 0.20},
+            ],
+        )
+        result = await handler.handle_expense_add(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ok"
+        shares_by_name = {s["name"]: s["amount_cents"] for s in result["shares"]}
+        assert shares_by_name == {"Alice": 0, "Bob": 10, "Charlie": 20}
+
+    @pytest.mark.asyncio
+    async def test_payer_in_participants_is_folded(self, db_session, sample_group):
+        """An explicit payer entry is folded into the residual, not double-counted."""
+        entities = Entities(
+            amount=100.0, paid_by="Alice", description="hotel",
+            participants=[
+                {"name": "Alice", "amount": 40.0},
+                {"name": "Bob", "amount": 60.0},
+            ],
+        )
+        result = await handler.handle_expense_add(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ok"
+        shares_by_name = {s["name"]: s["amount_cents"] for s in result["shares"]}
+        # Alice's explicit 40 was dropped; her share is the residual = 100 - 60 = 40
+        assert shares_by_name == {"Alice": 4000, "Bob": 6000}
+
+    @pytest.mark.asyncio
+    async def test_currency_normalized_on_add(self, db_session, sample_group):
+        entities = Entities(
+            amount=20.0, currency="usd", paid_by="Alice", description="coffee",
+            participants=[{"name": "Bob", "amount": 10.0}],
+        )
+        result = await handler.handle_expense_add(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ok"
+        assert result["currency"] == "USD"
+
+    @pytest.mark.asyncio
+    async def test_invalid_currency_on_add(self, db_session, sample_group):
+        entities = Entities(
+            amount=20.0, currency="dollars", paid_by="Alice", description="coffee",
+            participants=[{"name": "Bob", "amount": 10.0}],
+        )
+        result = await handler.handle_expense_add(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "invalid_currency"
+
+    @pytest.mark.asyncio
     async def test_solo_expense(self, db_session, sample_group):
         """Empty participants — payer bears full cost."""
         entities = Entities(
@@ -198,6 +258,54 @@ class TestHandleExpenseSettle:
         assert result["status"] == "error"
         assert result["reason"] == "payee_not_found"
         assert result["name"] == "Zara"
+
+    @pytest.mark.asyncio
+    async def test_settle_with_dict_participant(self, db_session, sample_group):
+        """LLM occasionally passes the dict shape; must still resolve the payee."""
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "dinner",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id, sample_group.charlie.id],
+                3000,
+            ),
+        )
+
+        entities = Entities(amount=10.0, participants=[{"name": "Alice"}])
+        result = await handler.handle_expense_settle(
+            db_session, sample_group.group_id, sample_group.bob.id, entities
+        )
+        assert result["status"] == "ok"
+        assert result["payee"] == "Alice"
+
+    @pytest.mark.asyncio
+    async def test_settle_dict_participant_without_name(self, db_session, sample_group):
+        """A dict participant with no name field is rejected cleanly."""
+        entities = Entities(amount=10.0, participants=[{"amount": 10.0}])
+        result = await handler.handle_expense_settle(
+            db_session, sample_group.group_id, sample_group.bob.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "missing_settlement_payee"
+
+    @pytest.mark.asyncio
+    async def test_settle_normalizes_currency_case(self, db_session, sample_group):
+        """Lowercase / mixed-case currency input is normalized to uppercase."""
+        entities = Entities(amount=10.0, currency="usd", participants=["Alice"])
+        result = await handler.handle_expense_settle(
+            db_session, sample_group.group_id, sample_group.bob.id, entities
+        )
+        assert result["status"] == "ok"
+        assert result["currency"] == "USD"
+
+    @pytest.mark.asyncio
+    async def test_settle_invalid_currency_returns_error(self, db_session, sample_group):
+        entities = Entities(amount=10.0, currency="dollars", participants=["Alice"])
+        result = await handler.handle_expense_settle(
+            db_session, sample_group.group_id, sample_group.bob.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "invalid_currency"
 
     @pytest.mark.asyncio
     async def test_settle_with_currency(self, db_session, sample_group):
@@ -383,6 +491,40 @@ class TestHandleExpenseUpdate:
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert result["status"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_update_currency_normalized(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "dinner",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
+        )
+        entities = Entities(description="dinner", currency="usd", amount=30.0)
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ok"
+        assert result["currency"] == "USD"
+
+    @pytest.mark.asyncio
+    async def test_update_invalid_currency(self, db_session, sample_group):
+        await service.add_expense(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            3000, "EUR", "dinner",
+            _shares_for_even(
+                [sample_group.alice.id, sample_group.bob.id],
+                3000,
+            ),
+        )
+        entities = Entities(description="dinner", currency="dollars")
+        result = await handler.handle_expense_update(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "invalid_currency"
 
     @pytest.mark.asyncio
     async def test_update_no_identifier(self, db_session, sample_group):

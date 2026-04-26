@@ -1,6 +1,9 @@
 """Application settings loaded from environment variables."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+from piazza.core.currency import normalize as _normalize_currency
 
 # Approval status constants
 APPROVAL_PENDING = "pending"
@@ -77,6 +80,11 @@ class Settings(BaseSettings):
     # Monitoring (optional)
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.1
+
+    @field_validator("default_currency")
+    @classmethod
+    def _validate_default_currency(cls, v: str) -> str:
+        return _normalize_currency(v)
 
     @property
     def encryption_key_bytes(self) -> bytes:

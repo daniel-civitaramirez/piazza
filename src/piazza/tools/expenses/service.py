@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from piazza.core.currency import normalize as normalize_currency
 from piazza.core.exceptions import ExpenseError, NotFoundError
 from piazza.db.models.expense import Expense
 from piazza.db.repositories import expense as expense_repo
@@ -68,6 +69,7 @@ def expense_to_dict(exp: Expense, number: int | None = None) -> dict:
         if p.member
     ]
     d: dict = {
+        "id": str(exp.id)[:8],
         "amount_cents": exp.amount_cents,
         "currency": exp.currency,
         "description": exp.description,
@@ -180,6 +182,7 @@ async def add_expense(
     shares: list[tuple[uuid.UUID, int]],
 ) -> ExpenseResult:
     """Create an expense with participants."""
+    currency = normalize_currency(currency)
     expense = await expense_repo.create_expense(
         session, group_id, payer_id, amount_cents, currency, description
     )
@@ -334,6 +337,7 @@ async def update_expense(
         await expense_repo.update_description(session, expense, new_description)
 
     if new_currency is not None:
+        new_currency = normalize_currency(new_currency)
         changes.append({"field": "currency", "old": expense.currency, "new": new_currency})
         expense.currency = new_currency
 
