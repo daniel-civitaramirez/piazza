@@ -112,7 +112,7 @@ All user-generated content is encrypted at the application layer with AES-256-GC
 
 The `ENCRYPTION_KEY` is a 32-byte base64 secret. Lose it and the data is gone. There is no recovery path by design.
 
-**Message log retention.** After every message, entries beyond `conversation_context_limit * message_log_retention_multiplier` (default 10 × 2 = 20) are pruned per group. The bot only ever holds a short rolling window of recent messages.
+**Message log retention.** After every message, entries beyond `conversation_context_limit * message_log_retention_multiplier` (default 20 × 2 = 40) are pruned per group. The bot only ever holds a short rolling window of recent messages.
 
 ## Security pipeline
 
