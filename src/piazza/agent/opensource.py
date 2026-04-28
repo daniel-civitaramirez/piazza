@@ -77,6 +77,7 @@ class OpenSourceAgent(BaseAgent):
                 {"role": "user", "content": user_content},
             ],
             "temperature": self.temperature,
+            "think": False,
         }
         if tools:
             payload["tools"] = _format_tools(tools)
@@ -107,6 +108,7 @@ class OpenSourceAgent(BaseAgent):
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
+            "think": False,
         })
         return _parse_response(body)
 

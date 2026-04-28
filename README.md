@@ -21,7 +21,7 @@ Everything is in the user's language. The agent generates responses in whatever 
 
 ## How it's built
 
-- **Two-tier LLM agent.** A local Ollama model (Qwen 3.5 4B) handles the easy 80%; Claude Haiku takes the rest as fallback. A circuit breaker trips Ollama out for 10 minutes after 3 failures in 2 minutes.
+- **Two-tier LLM agent.** A local Ollama model (Qwen 3.5 0.8B) and Claude Haiku takes as a fallback. A circuit breaker trips Ollama out for 10 minutes after 3 failures in 2 minutes.
 - **Tool-using agent, not a classifier.** Both tiers run a real tool loop and call 25 typed tools across 6 domains.
 - **Encryption at rest.** All user content (messages, expenses, notes, reminders, names) is encrypted with AES-256-GCM at the application layer before hitting Postgres. Supabase sees opaque bytes.
 - **Two-layer prompt-injection defense.** L1 regex sanitizer for known attack shapes, L2 ML screening via `llm-guard`.
@@ -37,7 +37,7 @@ Everything is in the user's language. The agent generates responses in whatever 
 | Queue | arq (Redis-backed) |
 | DB | Postgres (Supabase) via SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
-| LLM | Ollama (Qwen 3.5 4B) → Anthropic Claude Haiku 4.5 |
+| LLM | Ollama (Qwen 3.5 0.8B) → Anthropic Claude Haiku 4.5 |
 | Security | `llm-guard`, AES-256-GCM, HMAC webhook verification |
 | WhatsApp | Evolution API (Baileys-based) |
 | Hosting | Single VPS, Docker Compose, Caddy auto-TLS |

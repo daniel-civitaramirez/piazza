@@ -47,7 +47,7 @@ Both tiers are real agents with tool use. They share `BaseAgent._execute()` for 
 
 | | OpenSourceAgent | ClaudeAgent |
 |---|---|---|
-| Model | Ollama (Qwen 3.5 4B) | Anthropic Claude Haiku 4.5 |
+| Model | Ollama (Qwen 3.5 0.8B) | Anthropic Claude Haiku 4.5 |
 | API format | OpenAI-compatible | Anthropic native |
 | Timeout | 10s | 15s |
 | Cost | Free, local | ~$0.001 per message |
