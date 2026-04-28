@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     opensource_agent_enabled: bool = True
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen3.5:0.8b"
+    ollama_model: str = "qwen2.5:0.5b"
     ollama_timeout: float = 10.0
     claude_model: str = "claude-haiku-4-5-20251001"
     claude_timeout: float = 10.0

@@ -50,7 +50,7 @@ WhatsApp → Evolution API → /webhook (HMAC verify) → parse_webhook()
 
 Both tiers are full agents with tool use, not classifiers. They share `BaseAgent._execute()` for the tool loop and differ only in the LLM API call.
 
-- **OpenSourceAgent**: Ollama (default `qwen3.5:0.8b`, override via `OLLAMA_MODEL`), OpenAI-compatible format, 10s timeout.
+- **OpenSourceAgent**: Ollama (default `qwen2.5:0.5b`, override via `OLLAMA_MODEL`), OpenAI-compatible format, 10s timeout.
 - **ClaudeAgent**: Anthropic (haiku-4-5), native format, 15s timeout.
 - **Fallback logic** lives in `workers/process_message.py:_run_agent()`, not in agent classes.
 - **Circuit breaker**: 3 Ollama failures in 120s trip a 600s cooldown.
@@ -134,7 +134,7 @@ VPS-specific runbook (SSH key, paths, Supabase project ID, the four deploy proce
 - `SUPABASE_DB_URL` — asyncpg-prefixed Supavisor transaction-mode URL (port 6543, `?ssl=require`)
 - `ANTHROPIC_API_KEY`, `ENCRYPTION_KEY` (base64 32 bytes), `WEBHOOK_SECRET`, `REDIS_PASSWORD`
 - `EVO_API_KEY`, `EVO_DB_PASSWORD`, `EVO_INSTANCE_NAME`, `BOT_JID`, `DOMAIN`
-- Optional: `ADMIN_JID` (empty ⇒ auto-approve all groups), `SENTRY_DSN`, `OPENEXCHANGERATES_KEY`, `OLLAMA_MODEL` (override `qwen3.5:0.8b`), `OPENSOURCE_AGENT_ENABLED` (`false` to skip Ollama tier)
+- Optional: `ADMIN_JID` (empty ⇒ auto-approve all groups), `SENTRY_DSN`, `OPENEXCHANGERATES_KEY`, `OLLAMA_MODEL` (override `qwen2.5:0.5b`), `OPENSOURCE_AGENT_ENABLED` (`false` to skip Ollama tier)
 
 `EVO_API_URL`, `OLLAMA_URL`, `REDIS_URL`, `INJECTION_PATTERNS_PATH` are set by compose to container hostnames — do NOT put them in `.env`.
 
