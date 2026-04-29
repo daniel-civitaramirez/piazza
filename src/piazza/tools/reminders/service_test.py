@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from piazza.core.exceptions import NotFoundError, ReminderError
+from piazza.core.exceptions import NotFoundError, PastTimeError, ReminderError
 from piazza.db.repositories import reminder as queries
 from piazza.tools.reminders import service
 from piazza.tools.reminders.service import (
@@ -123,6 +123,33 @@ class TestSetReminder:
         )
         assert reminder.message == "pack for trip"
         assert reminder.trigger_at is not None
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_in_past_raises(self, db_session, sample_group):
+        """Datetime that resolves to the past raises PastTimeError."""
+        with pytest.raises(PastTimeError):
+            await service.set_reminder(
+                db_session,
+                sample_group.group_id,
+                sample_group.alice.id,
+                "x",
+                "2020-01-01 12:00",
+                tz="UTC",
+            )
+
+    @pytest.mark.asyncio
+    async def test_set_reminder_past_does_not_persist(self, db_session, sample_group):
+        """A rejected past reminder must not leave a row in the DB."""
+        with pytest.raises(PastTimeError):
+            await service.set_reminder(
+                db_session,
+                sample_group.group_id,
+                sample_group.alice.id,
+                "x",
+                "2020-01-01 12:00",
+                tz="UTC",
+            )
+        assert await service.list_reminders(db_session, sample_group.group_id) == []
 
 
 
@@ -392,6 +419,43 @@ class TestFireReminders:
             new_trigger = new_trigger.replace(tzinfo=timezone.utc)
         assert new_trigger > datetime.now(timezone.utc)
 
+
+    @pytest.mark.asyncio
+    async def test_corrupt_recurrence_does_not_block_other_reminders(
+        self, db_session, sample_group
+    ):
+        """A bad recurrence rule on one row must not poison the whole batch.
+
+        Regression: the loop used a single trailing commit, so any exception
+        (e.g. rrulestr() rejecting a corrupt rule) aborted the whole tick
+        and prevented every other due reminder from firing.
+        """
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "valid one-time A", past,
+        )
+        # Bypass _validate_rrule by writing a corrupt rule via the repo.
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "corrupt recurring", past, recurrence="THIS_IS_NOT_AN_RRULE",
+        )
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "valid one-time B", past,
+        )
+        await db_session.flush()
+
+        payloads = await fire_reminders(db_session)
+        texts = [t for _, t in payloads]
+        assert any("valid one-time A" in t for t in texts)
+        assert any("valid one-time B" in t for t in texts)
+        assert not any("corrupt recurring" in t for t in texts)
+
+        # Valid reminders are now fired; the corrupt one stays active.
+        active = await queries.get_active_reminders(db_session, sample_group.group_id)
+        assert [r.message for r in active] == ["corrupt recurring"]
 
     @pytest.mark.asyncio
     async def test_recurring_aligned_trigger_no_duplicate(self, db_session, sample_group):

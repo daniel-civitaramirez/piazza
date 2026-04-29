@@ -7,11 +7,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from piazza.db.repositories.reminder import (
+    cancel_active_reminder,
     cancel_reminder,
     create_reminder,
     get_active_reminders,
     get_due_reminders,
     snooze_reminder,
+    update_reminder_status,
 )
 
 
@@ -138,6 +140,39 @@ class TestRecurrenceColumn:
             "one-time", trigger,
         )
         assert reminder.recurrence is None
+
+
+class TestCancelActiveReminder:
+    @pytest.mark.asyncio
+    async def test_cancels_active(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        r = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "active one", trigger,
+        )
+        ok = await cancel_active_reminder(db_session, r.id)
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_skips_already_fired(self, db_session, sample_group):
+        """Cannot cancel a reminder that the cron has already fired.
+
+        Regression: the previous unguarded UPDATE would happily overwrite
+        status='fired' back to 'cancelled', erasing the firing record.
+        """
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        r = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "already fired", trigger,
+        )
+        await update_reminder_status(db_session, r.id, "fired")
+
+        ok = await cancel_active_reminder(db_session, r.id)
+        assert ok is False
+
+        # Status remains 'fired', not 'cancelled'.
+        await db_session.refresh(r)
+        assert r.status == "fired"
 
 
 class TestSnoozeReminder:

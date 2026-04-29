@@ -55,6 +55,16 @@ class TestHandleReminderSet:
         assert result["reason"] == "unparseable_time"
 
     @pytest.mark.asyncio
+    async def test_past_datetime_returns_time_in_past(self, db_session, sample_group):
+        entities = Entities(description="x", datetime_raw="2020-01-01 12:00")
+        result = await handler.handle_reminder_set(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "time_in_past"
+        assert result["raw"] == "2020-01-01 12:00"
+
+    @pytest.mark.asyncio
     async def test_list_includes_recurrence(self, db_session, sample_group):
         entities = Entities(
             description="take pills",
