@@ -62,6 +62,7 @@ class ClaudeAgent(BaseAgent):
             "max_tokens": self.max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user_content}],
+            "thinking": {"type": "disabled"},
         }
         if tools:
             kwargs["tools"] = tools  # Already in Anthropic format
@@ -113,6 +114,7 @@ class ClaudeAgent(BaseAgent):
                 max_tokens=self.max_tokens,
                 system=system,
                 messages=messages,
+                thinking={"type": "disabled"},
             )
         except anthropic.APITimeoutError as exc:
             logger.warning("claude_agent_followup_timeout")

@@ -122,6 +122,20 @@ async def test_post_sends_payload_as_json():
     assert sent_json["messages"][0]["content"] == "hi"
 
 
+async def test_generate_disables_reasoning():
+    """Both _generate and _generate_followup must send reasoning_effort=none."""
+    agent = _make_agent()
+    client, instance = _mock_async_client(
+        json_response={"choices": [{"message": {"content": "ok", "tool_calls": []}}]},
+    )
+
+    with patch("piazza.agent.fireworks.httpx.AsyncClient", return_value=client):
+        await agent._generate("system", "user message", tools=None)
+
+    sent_json = instance.post.call_args.kwargs["json"]
+    assert sent_json["reasoning_effort"] == "none"
+
+
 def test_format_tools_converts_anthropic_to_openai():
     anthropic_tools = [
         {

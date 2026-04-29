@@ -84,6 +84,7 @@ class FireworksAgent(BaseAgent):
                 {"role": "user", "content": user_content},
             ],
             "temperature": self.temperature,
+            "reasoning_effort": "none",
         }
         if tools:
             payload["tools"] = _format_tools(tools)
@@ -114,6 +115,7 @@ class FireworksAgent(BaseAgent):
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
+            "reasoning_effort": "none",
         })
         return _parse_response(body)
 
