@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from piazza.core.exceptions import NotFoundError, ReminderError
+from piazza.core.exceptions import NotFoundError, PastTimeError, ReminderError
 from piazza.db.models.reminder import Reminder
 from piazza.db.repositories.group import get_group
 from piazza.tools.reminders import service
@@ -79,6 +79,8 @@ async def handle_reminder_set(
             entities.description, entities.datetime_raw, tz,
             recurrence=entities.recurrence,
         )
+    except PastTimeError:
+        return error_response(Reason.TIME_IN_PAST, raw=entities.datetime_raw or "")
     except ReminderError:
         return error_response(
             Reason.UNPARSEABLE_TIME,

@@ -31,37 +31,48 @@ async def fire_reminders(
 
     payloads: list[tuple[str, str]] = []
 
+    # Each reminder is isolated: a corrupt recurrence rule or a transient DB
+    # error on one row must not block the rest of the batch.
     for reminder in due:
-        group = reminder.group
-        group_jid = group.wa_jid if group else ""
-        tz = group.timezone if group and group.timezone else "UTC"
-        text = f"⏰ {reminder.message}"
+        try:
+            group = reminder.group
+            group_jid = group.wa_jid if group else ""
+            tz = group.timezone if group and group.timezone else "UTC"
+            text = f"⏰ {reminder.message}"
 
-        if reminder.recurrence:
-            scheduled = reminder.trigger_at
-            if scheduled.tzinfo is None:
-                scheduled = scheduled.replace(tzinfo=timezone.utc)
-            # The originally-scheduled fire, plus any extra occurrences that
-            # passed while the worker was down.
-            fire_count = 1 + len(
-                occurrences_between(reminder.recurrence, scheduled, now, tz)
-            )
-            for _ in range(fire_count):
-                payloads.append((group_jid, text))
-
-            next_at = next_occurrence(reminder.recurrence, now, tz)
-            if next_at is not None:
-                await reminder_repo.update_reminder_status(
-                    session, reminder.id, "active", next_trigger_at=next_at
+            if reminder.recurrence:
+                scheduled = reminder.trigger_at
+                if scheduled.tzinfo is None:
+                    scheduled = scheduled.replace(tzinfo=timezone.utc)
+                # Originally-scheduled fire, plus any extra occurrences that
+                # passed while the worker was down.
+                fire_count = 1 + len(
+                    occurrences_between(reminder.recurrence, scheduled, now, tz)
                 )
+                next_at = next_occurrence(reminder.recurrence, now, tz)
+                if next_at is not None:
+                    await reminder_repo.update_reminder_status(
+                        session, reminder.id, "active", next_trigger_at=next_at
+                    )
+                else:
+                    await reminder_repo.update_reminder_status(
+                        session, reminder.id, "fired"
+                    )
+                await session.commit()
+                for _ in range(fire_count):
+                    payloads.append((group_jid, text))
             else:
-                await reminder_repo.update_reminder_status(session, reminder.id, "fired")
-        else:
-            payloads.append((group_jid, text))
-            await reminder_repo.update_reminder_status(session, reminder.id, "fired")
+                await reminder_repo.update_reminder_status(
+                    session, reminder.id, "fired"
+                )
+                await session.commit()
+                payloads.append((group_jid, text))
+        except Exception:
+            logger.exception("fire_reminder_failed", reminder_id=str(reminder.id))
+            await session.rollback()
+            continue
 
     if payloads:
-        await session.commit()
         logger.info("reminders_fired", count=len(payloads))
 
     return payloads

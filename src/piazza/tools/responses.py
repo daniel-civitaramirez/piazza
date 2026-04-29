@@ -84,6 +84,7 @@ class Reason:
     UNPARSEABLE_TIME = "unparseable_time"
     UNPARSEABLE_DURATION = "unparseable_duration"
     INVALID_TIMEZONE = "invalid_timezone"
+    TIME_IN_PAST = "time_in_past"
 
     # Itinerary
     MISSING_ITEMS = "missing_items"

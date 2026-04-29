@@ -13,7 +13,7 @@ from dateutil.rrule import rrulestr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from piazza.core.exceptions import NotFoundError, ReminderError
+from piazza.core.exceptions import NotFoundError, PastTimeError, ReminderError
 from piazza.db.models.group import Group
 from piazza.db.models.reminder import Reminder
 from piazza.db.repositories import reminder as reminder_repo
@@ -135,6 +135,10 @@ async def set_reminder(
 
     if datetime_raw:
         trigger_at = parse_time(datetime_raw, tz)
+        if trigger_at <= datetime.now(timezone.utc):
+            raise PastTimeError(
+                f"_{datetime_raw}_ is already in the past."
+            )
     elif recurrence:
         next_at = next_occurrence(recurrence, datetime.now(timezone.utc), tz)
         if next_at is None:
@@ -192,8 +196,9 @@ async def cancel_by_message(
         return matches[:5]
 
     reminder = matches[0]
+    if not await reminder_repo.cancel_active_reminder(session, reminder.id):
+        raise NotFoundError("reminder", query=query)
     reminder.status = "cancelled"
-    await session.flush()
     await session.commit()
     return reminder
 
