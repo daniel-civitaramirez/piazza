@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -32,45 +33,46 @@ def _speaker_name(msg: MessageLog) -> str:
     if msg.role == "assistant":
         return "Piazza"
     if msg.role == "user" and msg.member:
-        return msg.member.display_name
+        return msg.member.display_name  # type: ignore[no-any-return]
     return "Unknown"
+
+
+def _from_log(msg: MessageLog) -> tuple[str, str]:
+    return _speaker_name(msg), msg.content  # type: ignore[return-value]
+
+
+def _inline_tag(name: str, value: str) -> str:
+    return f"<{name}>{value}</{name}>"
+
+
+def _authored_block(name: str, entries: Iterable[tuple[str, str]]) -> str:
+    lines = [f"[{author}]: {text}" for author, text in entries]
+    return f"<{name}>\n" + "\n".join(lines) + f"\n</{name}>"
 
 
 def build_user_content(context: AgentContext) -> str:
     """Build the user message content with context tags for the agent LLM."""
-    parts: list[str] = []
-
     now = datetime.now(ZoneInfo(context.tz))
-    parts.append(
-        f"<current_time>{now.strftime('%A, %-d %B %Y %H:%M:%S')}</current_time>"
-    )
 
-    parts.append(f"<sender>{context.sender_name}</sender>")
+    parts: list[str] = [
+        _inline_tag("current_time", now.strftime("%A, %-d %B %Y %H:%M:%S")),
+        _inline_tag("message_sender", context.sender_name),
+    ]
     if context.member_names:
-        parts.append(
-            f"<group_members>{', '.join(context.member_names)}</group_members>"
-        )
+        parts.append(_inline_tag("group_members", ", ".join(context.member_names)))
 
     if context.recent_messages:
-        lines = [
-            f"[{_speaker_name(msg)}]: {msg.content}" for msg in context.recent_messages
-        ]
         parts.append(
-            "<recent_context>\n" + "\n".join(lines) + "\n</recent_context>"
+            _authored_block("recent_context", (_from_log(m) for m in context.recent_messages))
         )
 
     if context.reply_context:
-        name = _speaker_name(context.reply_context)
         parts.append(
-            "<replying_to_message>\n"
-            f"[{name}]: {context.reply_context.content}\n"
-            "</replying_to_message>"
+            _authored_block("user_replying_to_message", [_from_log(context.reply_context)])
         )
 
     parts.append(
-        "<user_message>\n"
-        f"[{context.sender_name}]: {context.text}\n"
-        "</user_message>"
+        _authored_block("user_message", [(context.sender_name, context.text)])
     )
 
     return "\n".join(parts)
