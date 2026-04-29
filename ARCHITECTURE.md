@@ -1,6 +1,6 @@
 # Architecture
 
-Piazza is a WhatsApp-native productivity agent. This document covers the design choices behind it: how a message flows through the system, why there are two LLM tiers, how data stays private, and how we defend against prompt injection.
+Piazza is a WhatsApp-native productivity agent. This document covers the design choices behind it: how a message flows through the system, how the LLM provider is selected, how data stays private, and how we defend against prompt injection.
 
 ## Message flow
 
@@ -27,10 +27,11 @@ Evolution API ───► POST /webhook (HMAC-verified)
                        ▼
                   _run_agent()
                        │
-                       ├── OpenSourceAgent (Ollama, 10s timeout)
-                       │      │  fail / circuit open
-                       │      ▼
-                       └── ClaudeAgent (Anthropic, 15s timeout)
+                       ▼
+                  get_agent()  ── dispatches on LLM_PROVIDER
+                       │
+                       ├── ClaudeAgent (Anthropic native, 15s timeout)
+                       └── FireworksAgent (OpenAI-compatible, 15s timeout)
                               │
                               ▼
                        tool execution
@@ -41,24 +42,24 @@ Evolution API ───► POST /webhook (HMAC-verified)
 
 The webhook handler does almost nothing. It verifies the HMAC, parses the payload, and enqueues an arq job. All real work happens in the worker.
 
-## Two-tier LLM agent
+## Single-provider LLM agent
 
-Both tiers are real agents with tool use. They share `BaseAgent._execute()` for the tool loop and only differ in their LLM API call.
+One provider is selected at deploy time via the `LLM_PROVIDER` env var. Both implementations share `BaseAgent._execute()` for the tool loop and only differ in their LLM API call.
 
-| | OpenSourceAgent | ClaudeAgent |
+| | ClaudeAgent | FireworksAgent |
 |---|---|---|
-| Model | Ollama (Qwen 2.5 0.5B) | Anthropic Claude Haiku 4.5 |
-| API format | OpenAI-compatible | Anthropic native |
-| Timeout | 10s | 15s |
-| Cost | Free, local | ~$0.001 per message |
+| `LLM_PROVIDER` value | `claude` (default) | `fireworks` |
+| Model (default) | Anthropic Claude Haiku 4.5 | Qwen3-30B-A3B (Fireworks-hosted, MoE, 3B active) |
+| API format | Anthropic native | OpenAI-compatible (chat completions) |
+| Auth | `ANTHROPIC_API_KEY` | `Authorization: Bearer ${FIREWORKS_API_KEY}` |
+| Timeout | `LLM_TIMEOUT` (15s) | `LLM_TIMEOUT` (15s) |
+| Cost (rough) | ~$1/M in, $5/M out | ~$0.20/M in & out |
 
-**Why two tiers.** The local model handles ~80% of group chat: simple expense entries, reminder set/cancel, list lookups. Claude takes the harder cases: ambiguous splits, multi-step intent, language the local model trips on.
+**No fallback, no circuit breaker.** A provider failure becomes `GENERIC_ERROR_RESPONSE`. The previous two-tier design (local Ollama → Claude with a Redis-backed circuit breaker) was retired in favor of this simpler shape: cheaper hosted open-source models removed the cost case for running a local LLM, and the breaker only existed to manage tier-switching.
 
-**Fallback logic** lives in `workers/process_message.py:_run_agent()`, not inside the agent classes. The agents don't know about each other. The worker decides.
+**Dispatch** lives in `agent/__init__.py::get_agent()`. The worker calls `get_agent()` once per message; provider selection is fixed for the lifetime of the process.
 
-**Circuit breaker.** 3 Ollama failures within 120 seconds trip a 600-second cooldown. During cooldown, traffic skips straight to Claude. This stops a flaky GPU host from burning latency on every message.
-
-**Kill switch.** `OPENSOURCE_AGENT_ENABLED=false` disables the local tier entirely. Useful when running on a host without a GPU.
+**Why a timeout at all.** `process_message` holds a per-group Redis lock around the agent call. Without a bounded timeout, a stalled upstream blocks every subsequent message from that group until the lock TTL expires. 15s is enough headroom for hosted 70B+ models while still failing fast.
 
 ## Tool pattern
 
@@ -161,7 +162,7 @@ Repository functions use domain verbs where it reads better than CRUD: `cancel_r
 
 ## Production topology
 
-Single VPS, Docker Compose, 7 services:
+Single VPS, Docker Compose, 6 services:
 
 | Service | Role |
 |---|---|
@@ -169,9 +170,10 @@ Single VPS, Docker Compose, 7 services:
 | `app` | FastAPI webhook handler |
 | `worker` | arq worker (message processing, agent calls, tool execution) |
 | `redis` | Queue, rate limiter, lock, group cache |
-| `ollama` | Local LLM tier |
 | `evolution-api` | WhatsApp gateway (Baileys-based) |
 | `evolution-postgres` | Evolution API's own DB |
+
+The LLM is hosted (Anthropic or Fireworks.ai). No local model service runs in the stack.
 
 The application database is **Supabase** (managed Postgres), not the local Compose stack. Connections go through Supavisor in transaction mode (port 6543), which doesn't support prepared statements, so `engine.py` sets `statement_cache_size=0` and `prepared_statement_cache_size=0`.
 
@@ -181,7 +183,7 @@ The application database is **Supabase** (managed Postgres), not the local Compo
 
 **Why structured dicts instead of i18n templates?** The LLM is already in the loop. Asking it to write the user-facing reply in the user's language costs nothing extra and removes hundreds of lines of templating per language.
 
-**Why two LLM tiers instead of one?** Cost and latency. A local 4B model answers most messages in under a second for free. Claude is the safety net for the long tail.
+**Why a single LLM provider instead of two tiers with fallback?** The previous design ran a local Ollama model as the primary path with Claude as fallback, gated by a Redis circuit breaker. Hosted open-source models on Fireworks.ai are now cheap enough (~9× cheaper than Claude Haiku for the Qwen3-30B-A3B baseline) that the operational cost of running and monitoring a local GPU outweighs the per-token savings. One provider, one code path, one set of failure modes — provider choice moves to a single deploy-time env var.
 
 **Why encrypt at the application layer instead of using Supabase's column encryption?** Defense in depth. Even with a leaked DB credential or a Supabase compromise, the data is unreadable without the application's `ENCRYPTION_KEY`. The tradeoff is that text search can't use Postgres indexes; we accept fetch-all + Python substring match for the search volumes a single group produces.
 

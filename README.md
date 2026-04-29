@@ -21,8 +21,8 @@ Everything is in the user's language. The agent generates responses in whatever 
 
 ## How it's built
 
-- **Two-tier LLM agent.** A local Ollama model (Qwen 2.5 0.5B) and Claude Haiku takes as a fallback. A circuit breaker trips Ollama out for 10 minutes after 3 failures in 2 minutes.
-- **Tool-using agent, not a classifier.** Both tiers run a real tool loop and call 25 typed tools across 6 domains.
+- **Single-provider LLM agent.** Pick Claude (Haiku 4.5) or Fireworks.ai (open-source models like Qwen3) at deploy time via `LLM_PROVIDER`. One env var, no fallback chain, no circuit breaker.
+- **Tool-using agent, not a classifier.** The agent runs a real tool loop and calls 25 typed tools across 6 domains.
 - **Encryption at rest.** All user content (messages, expenses, notes, reminders, names) is encrypted with AES-256-GCM at the application layer before hitting Postgres. Supabase sees opaque bytes.
 - **Two-layer prompt-injection defense.** L1 regex sanitizer for known attack shapes, L2 ML screening via `llm-guard`.
 - **Per-group rate limit and lock.** Redis-backed. Rate-limited messages return a static reply with zero LLM cost.
@@ -37,7 +37,7 @@ Everything is in the user's language. The agent generates responses in whatever 
 | Queue | arq (Redis-backed) |
 | DB | Postgres (Supabase) via SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
-| LLM | Ollama (Qwen 2.5 0.5B) → Anthropic Claude Haiku 4.5 |
+| LLM | Anthropic Claude Haiku 4.5 *or* Fireworks.ai (open-source, e.g. Qwen3-30B-A3B) — pick one via `LLM_PROVIDER` |
 | Security | `llm-guard`, AES-256-GCM, HMAC webhook verification |
 | WhatsApp | Evolution API (Baileys-based) |
 | Hosting | Single VPS, Docker Compose, Caddy auto-TLS |
@@ -55,12 +55,14 @@ git clone https://github.com/<you>/piazza.git
 cd piazza
 uv sync --extra dev
 
-# 3. Start Redis and Ollama
+# 3. Start Redis
 docker compose up -d
 
 # 4. Configure
 cp .env.example .env
-# Fill in ANTHROPIC_API_KEY, ENCRYPTION_KEY (32-byte base64), SUPABASE_DB_URL
+# Fill in ENCRYPTION_KEY (32-byte base64), SUPABASE_DB_URL, and either:
+#   ANTHROPIC_API_KEY  (default: LLM_PROVIDER=claude)
+#   FIREWORKS_API_KEY  (set LLM_PROVIDER=fireworks)
 
 # 5. Migrate
 uv run alembic upgrade head
@@ -75,7 +77,7 @@ For a production deploy (Caddy + Evolution API + worker), see [CONTRIBUTING.md](
 
 ```
 src/piazza/
-  agent/         LLM agents (Ollama + Claude), shared tool loop
+  agent/         LLM agents (Claude / Fireworks), shared tool loop and dispatcher
   config/        Settings, constants
   core/          Encryption, exceptions
   db/            SQLAlchemy models, repositories
