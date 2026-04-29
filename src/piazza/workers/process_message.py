@@ -9,9 +9,12 @@ import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from piazza.agent import get_agent
-from piazza.agent.base import AgentTimeoutError, AgentUnavailableError
-from piazza.agent.context import AgentContext
+from piazza.agent import (
+    AgentContext,
+    AgentTimeoutError,
+    AgentUnavailableError,
+    get_agent,
+)
 from piazza.config.settings import APPROVAL_APPROVED
 from piazza.core.encryption import hash_phone
 from piazza.core.exceptions import (

@@ -28,12 +28,10 @@ Evolution API ───► POST /webhook (HMAC-verified)
                   _run_agent()
                        │
                        ▼
-                  get_agent()  ── dispatches on LLM_PROVIDER
-                       │
-                       ├── ClaudeAgent (Anthropic native, 15s timeout)
-                       └── FireworksAgent (OpenAI-compatible, 15s timeout)
-                              │
-                              ▼
+                  get_agent()  ── one Agent class (Anthropic SDK)
+                       │            base_url + model picked from LLM_PROVIDER
+                       │            (Claude default URL, or Fireworks)
+                       ▼
                        tool execution
                               │
                               ▼
@@ -44,20 +42,22 @@ The webhook handler does almost nothing. It verifies the HMAC, parses the payloa
 
 ## Single-provider LLM agent
 
-One provider is selected at deploy time via the `LLM_PROVIDER` env var. Both implementations share `BaseAgent._execute()` for the tool loop and only differ in their LLM API call.
+One provider is selected at deploy time via the `LLM_PROVIDER` env var. A single `Agent` class (`agent/agent.py`) talks to both via the official `anthropic` Python SDK — Fireworks exposes an Anthropic-compatible endpoint at `https://api.fireworks.ai/inference`, so `client.messages.create(...)` is the same call shape for both. Tools are passed through unchanged (the registry already speaks Anthropic format).
 
-| | ClaudeAgent | FireworksAgent |
+| | Claude | Fireworks |
 |---|---|---|
-| `LLM_PROVIDER` value | `claude` (default) | `fireworks` |
-| Model (default) | Anthropic Claude Haiku 4.5 | Qwen3-30B-A3B (Fireworks-hosted, MoE, 3B active) |
-| API format | Anthropic native | OpenAI-compatible (chat completions) |
-| Auth | `ANTHROPIC_API_KEY` | `Authorization: Bearer ${FIREWORKS_API_KEY}` |
+| `LLM_PROVIDER` value | `claude` | `fireworks` (default) |
+| Model (default) | `claude-haiku-4-5-20251001` | `accounts/fireworks/models/gpt-oss-20b` |
+| Client | `anthropic.AsyncAnthropic()` | `anthropic.AsyncAnthropic(base_url="https://api.fireworks.ai/inference")` |
+| Auth | `ANTHROPIC_API_KEY` | `FIREWORKS_API_KEY` |
 | Timeout | `LLM_TIMEOUT` (15s) | `LLM_TIMEOUT` (15s) |
-| Cost (rough) | ~$1/M in, $5/M out | ~$0.20/M in & out |
+| Cost (rough) | ~$1/M in, $5/M out | ~$0.10/M in, $0.50/M out |
 
 **No fallback, no circuit breaker.** A provider failure becomes `GENERIC_ERROR_RESPONSE`. The previous two-tier design (local Ollama → Claude with a Redis-backed circuit breaker) was retired in favor of this simpler shape: cheaper hosted open-source models removed the cost case for running a local LLM, and the breaker only existed to manage tier-switching.
 
-**Dispatch** lives in `agent/__init__.py::get_agent()`. The worker calls `get_agent()` once per message; provider selection is fixed for the lifetime of the process.
+**`thinking={"type": "disabled"}`** is sent on every call so reasoning models don't burn output tokens on hidden thought.
+
+**Singleton** lives in `agent/__init__.py::get_agent()`. The worker calls `get_agent()` once per message; provider selection is fixed for the lifetime of the process.
 
 **Why a timeout at all.** `process_message` holds a per-group Redis lock around the agent call. Without a bounded timeout, a stalled upstream blocks every subsequent message from that group until the lock TTL expires. 15s is enough headroom for hosted 70B+ models while still failing fast.
 

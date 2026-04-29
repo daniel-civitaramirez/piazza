@@ -1,7 +1,8 @@
 """Tool definitions and executor.
 
-Tools are defined in Anthropic format (canonical). The FireworksAgent converts
-to OpenAI format internally. Each tool maps to an existing handler function.
+Tools are defined in Anthropic format and passed directly to the Anthropic
+SDK for both Claude and Fireworks (Fireworks exposes an Anthropic-compatible
+endpoint). Each tool maps to an existing handler function.
 """
 
 from __future__ import annotations

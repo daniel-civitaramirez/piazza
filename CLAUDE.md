@@ -48,12 +48,12 @@ WhatsApp → Evolution API → /webhook (HMAC verify) → parse_webhook()
 
 ### Single-provider LLM agent
 
-One provider is selected at deploy time via `LLM_PROVIDER` (`"claude"` default, or `"fireworks"`). Both implementations share `BaseAgent._execute()` for the tool loop and differ only in the LLM API call. No fallback, no circuit breaker — a provider failure becomes `GENERIC_ERROR_RESPONSE`.
+One provider is selected at deploy time via `LLM_PROVIDER` (`"fireworks"` default, or `"claude"`). One `Agent` class (`agent/agent.py`) talks to both via the official `anthropic` Python SDK — Fireworks exposes an Anthropic-compatible endpoint at `https://api.fireworks.ai/inference`, so `client.messages.create(...)` is the same call shape for both. No fallback, no circuit breaker — a provider failure becomes `GENERIC_ERROR_RESPONSE`.
 
-- **ClaudeAgent**: Anthropic SDK, native tool format. Configured via `ANTHROPIC_API_KEY`, `CLAUDE_MODEL` (default `claude-haiku-4-5-20251001`), `CLAUDE_MAX_TOKENS`.
-- **FireworksAgent**: Fireworks.ai chat completions (OpenAI-compatible) via httpx with `Authorization: Bearer ...`. Configured via `FIREWORKS_API_KEY`, `FIREWORKS_MODEL` (default `accounts/fireworks/models/qwen3-30b-a3b-instruct-2507`), `FIREWORKS_BASE_URL`.
-- **Universal:** `LLM_TIMEOUT` (default 15s) bounds the request so a stalled upstream can't hold the per-group lock. `LLM_TEMPERATURE` (default 0).
-- Dispatch lives in `agent/__init__.py::get_agent()`, called from `workers/process_message.py:_run_agent()`.
+- **Claude**: default Anthropic SDK base URL. Configured via `ANTHROPIC_API_KEY`, `CLAUDE_MODEL` (default `claude-haiku-4-5-20251001`).
+- **Fireworks**: Anthropic SDK pointed at `https://api.fireworks.ai/inference`. Configured via `FIREWORKS_API_KEY`, `FIREWORKS_MODEL` (default `accounts/fireworks/models/gpt-oss-20b`).
+- **Universal:** `LLM_TIMEOUT` (default 15s) bounds the request so a stalled upstream can't hold the per-group lock. `LLM_TEMPERATURE` (default 0). `LLM_MAX_TOKENS` (default 1024). `thinking={"type": "disabled"}` is sent on every call so reasoning models don't burn tokens on hidden thought.
+- Singleton lives in `agent/__init__.py::get_agent()`, called from `workers/process_message.py:_run_agent()`.
 
 ### Tool pattern (every tool follows this layering)
 

@@ -21,7 +21,7 @@ Everything is in the user's language. The agent generates responses in whatever 
 
 ## How it's built
 
-- **Single-provider LLM agent.** Pick Claude (Haiku 4.5) or Fireworks.ai (open-source models like Qwen3) at deploy time via `LLM_PROVIDER`. One env var, no fallback chain, no circuit breaker.
+- **Single-provider LLM agent.** Pick Fireworks.ai (default — open-source models like gpt-oss-20b) or Claude (Haiku 4.5) at deploy time via `LLM_PROVIDER`. One Anthropic SDK client for both (Fireworks exposes an Anthropic-compatible endpoint), no fallback chain, no circuit breaker.
 - **Tool-using agent, not a classifier.** The agent runs a real tool loop and calls 25 typed tools across 6 domains.
 - **Encryption at rest.** All user content (messages, expenses, notes, reminders, names) is encrypted with AES-256-GCM at the application layer before hitting Postgres. Supabase sees opaque bytes.
 - **Two-layer prompt-injection defense.** L1 regex sanitizer for known attack shapes, L2 ML screening via `llm-guard`.
@@ -37,7 +37,7 @@ Everything is in the user's language. The agent generates responses in whatever 
 | Queue | arq (Redis-backed) |
 | DB | Postgres (Supabase) via SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
-| LLM | Anthropic Claude Haiku 4.5 *or* Fireworks.ai (open-source, e.g. Qwen3-30B-A3B) — pick one via `LLM_PROVIDER` |
+| LLM | Fireworks.ai (default — open-source, e.g. gpt-oss-20b) *or* Anthropic Claude Haiku 4.5 — pick via `LLM_PROVIDER`. Both go through the Anthropic SDK. |
 | Security | `llm-guard`, AES-256-GCM, HMAC webhook verification |
 | WhatsApp | Evolution API (Baileys-based) |
 | Hosting | Single VPS, Docker Compose, Caddy auto-TLS |
@@ -61,8 +61,8 @@ docker compose up -d
 # 4. Configure
 cp .env.example .env
 # Fill in ENCRYPTION_KEY (32-byte base64), SUPABASE_DB_URL, and either:
-#   ANTHROPIC_API_KEY  (default: LLM_PROVIDER=claude)
-#   FIREWORKS_API_KEY  (set LLM_PROVIDER=fireworks)
+#   FIREWORKS_API_KEY  (default: LLM_PROVIDER=fireworks)
+#   ANTHROPIC_API_KEY  (set LLM_PROVIDER=claude)
 
 # 5. Migrate
 uv run alembic upgrade head
@@ -77,7 +77,7 @@ For a production deploy (Caddy + Evolution API + worker), see [CONTRIBUTING.md](
 
 ```
 src/piazza/
-  agent/         LLM agents (Claude / Fireworks), shared tool loop and dispatcher
+  agent/         LLM agent (one Agent class via the Anthropic SDK), tool loop
   config/        Settings, constants
   core/          Encryption, exceptions
   db/            SQLAlchemy models, repositories

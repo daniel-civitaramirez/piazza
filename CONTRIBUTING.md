@@ -19,8 +19,8 @@ cp .env.example .env
 # Fill in: ENCRYPTION_KEY, SUPABASE_DB_URL, WEBHOOK_SECRET,
 #         EVO_API_KEY, EVO_DB_PASSWORD, EVO_INSTANCE_NAME, BOT_JID, DOMAIN
 # Plus the LLM provider you want:
-#   LLM_PROVIDER=claude (default) → set ANTHROPIC_API_KEY
-#   LLM_PROVIDER=fireworks         → set FIREWORKS_API_KEY (and optionally FIREWORKS_MODEL)
+#   LLM_PROVIDER=fireworks (default) → set FIREWORKS_API_KEY (and optionally FIREWORKS_MODEL)
+#   LLM_PROVIDER=claude              → set ANTHROPIC_API_KEY
 
 docker compose up -d              # Redis
 uv run alembic upgrade head       # ENCRYPTION_KEY must be set

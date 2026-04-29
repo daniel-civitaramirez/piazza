@@ -36,19 +36,18 @@ class Settings(BaseSettings):
     redis_password: str = ""
 
     # LLM provider — pick "claude" or "fireworks"
-    llm_provider: Literal["claude", "fireworks"] = "claude"
+    llm_provider: Literal["claude", "fireworks"] = "fireworks"
     llm_timeout: float = 15.0
     llm_temperature: float = 0.0
+    llm_max_tokens: int = 1024
 
     # Claude (used when llm_provider == "claude")
     anthropic_api_key: str = ""
     claude_model: str = "claude-haiku-4-5-20251001"
-    claude_max_tokens: int = 1024
 
     # Fireworks (used when llm_provider == "fireworks")
     fireworks_api_key: str = ""
-    fireworks_model: str = "accounts/fireworks/models/qwen3-30b-a3b-instruct-2507"
-    fireworks_base_url: str = "https://api.fireworks.ai/inference/v1"
+    fireworks_model: str = "accounts/fireworks/models/gpt-oss-20b"
 
     # Security
     encryption_key: str = ""
