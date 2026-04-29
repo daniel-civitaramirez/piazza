@@ -54,7 +54,7 @@ CURRENCY:
 
 CAPABILITIES:
 - *Expenses*: add expenses, update expenses, split bills, check balances, settle up, list/delete expenses. Mixed-currency groups are supported.
-- *Reminders*: set one-time or recurring reminders, list, cancel, snooze.
+- *Reminders*: set one-time or recurring reminders, list, cancel, update.
 - *Notes*: save shared info (wifi passwords, booking refs), list, delete.
 - *Search*: search across all group data (expenses, reminders, itinerary, checklists, notes) at once.
 - *Checklists*: add items to shared lists (shopping, packing, etc.), check/uncheck items, list, delete.

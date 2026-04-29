@@ -13,7 +13,6 @@ from piazza.tools.reminders.service import (
     _validate_rrule,
     next_occurrence,
     occurrences_between,
-    parse_snooze_duration,
     parse_time,
 )
 from piazza.tools.reminders.tasks import fire_reminders
@@ -36,24 +35,6 @@ class TestParseTime:
     def test_returns_timezone_aware(self):
         result = parse_time("in 1 hour", "UTC")
         assert result.tzinfo is not None
-
-
-# ---------- Snooze duration parsing ----------
-
-
-class TestParseSnooze:
-    def test_1h(self):
-        assert parse_snooze_duration("1h") == timedelta(hours=1)
-
-    def test_30m(self):
-        assert parse_snooze_duration("30m") == timedelta(minutes=30)
-
-    def test_2h30m(self):
-        assert parse_snooze_duration("2h30m") == timedelta(hours=2, minutes=30)
-
-    def test_invalid_raises(self):
-        with pytest.raises(ReminderError, match="parse duration"):
-            parse_snooze_duration("abc")
 
 
 # ---------- DB-backed CRUD ----------
@@ -302,30 +283,96 @@ class TestReminderService:
         assert exc_info.value.number == 5
 
 
-class TestSnooze:
+class TestUpdateReminder:
     @pytest.mark.asyncio
-    async def test_snooze_1h(self, db_session, sample_group):
-        trigger = datetime(2025, 3, 15, 10, 0, tzinfo=timezone.utc)
-        r = await queries.create_reminder(
+    async def test_update_time_by_number(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await queries.create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
-            "snooze me", trigger,
+            "dentist", trigger,
         )
         await db_session.flush()
 
-        reminder = await service.snooze(db_session, r.id, "1h")
-        assert reminder.message == "snooze me"
+        result = await service.update_reminder(
+            db_session, sample_group.group_id,
+            item_number=1, datetime_raw="in 3 hours", tz="UTC",
+        )
+        assert not isinstance(result, list)
+        assert result.message == "dentist"
+        assert result.trigger_at > trigger
 
     @pytest.mark.asyncio
-    async def test_snooze_30m(self, db_session, sample_group):
-        trigger = datetime(2025, 3, 15, 10, 0, tzinfo=timezone.utc)
-        r = await queries.create_reminder(
+    async def test_update_text_by_message(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await queries.create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
-            "snooze me", trigger,
+            "dentist", trigger,
         )
         await db_session.flush()
 
-        reminder = await service.snooze(db_session, r.id, "30m")
-        assert reminder.message == "snooze me"
+        result = await service.update_reminder(
+            db_session, sample_group.group_id,
+            query="dentist", new_description="dental cleaning", tz="UTC",
+        )
+        assert not isinstance(result, list)
+        assert result.message == "dental cleaning"
+
+    @pytest.mark.asyncio
+    async def test_update_with_no_changes_raises(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "x", trigger,
+        )
+        await db_session.flush()
+
+        with pytest.raises(ReminderError):
+            await service.update_reminder(
+                db_session, sample_group.group_id, item_number=1, tz="UTC",
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_to_past_time_raises(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "x", trigger,
+        )
+        await db_session.flush()
+
+        with pytest.raises(PastTimeError):
+            await service.update_reminder(
+                db_session, sample_group.group_id,
+                item_number=1, datetime_raw="2020-01-01 12:00", tz="UTC",
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_nonexistent_number_raises(self, db_session, sample_group):
+        with pytest.raises(NotFoundError):
+            await service.update_reminder(
+                db_session, sample_group.group_id,
+                item_number=5, datetime_raw="in 1 hour", tz="UTC",
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_ambiguous_returns_list(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "meeting with team", trigger,
+        )
+        await queries.create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "meeting with client", trigger + timedelta(hours=1),
+        )
+        await db_session.flush()
+
+        result = await service.update_reminder(
+            db_session, sample_group.group_id,
+            query="meeting", datetime_raw="in 2 hours", tz="UTC",
+        )
+        assert isinstance(result, list)
+        assert len(result) == 2
 
 
 # ---------- Fire reminders task ----------

@@ -12,7 +12,7 @@ from piazza.db.repositories.reminder import (
     create_reminder,
     get_active_reminders,
     get_due_reminders,
-    snooze_reminder,
+    update_active_reminder,
     update_reminder_status,
 )
 
@@ -175,15 +175,56 @@ class TestCancelActiveReminder:
         assert r.status == "fired"
 
 
-class TestSnoozeReminder:
+class TestUpdateActiveReminder:
     @pytest.mark.asyncio
     async def test_updates_trigger_at(self, db_session, sample_group):
         trigger = datetime.now(timezone.utc) + timedelta(hours=1)
-        reminder = await create_reminder(
+        r = await create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
-            "snooze me", trigger,
+            "update me", trigger,
         )
         new_time = trigger + timedelta(hours=1)
-        snoozed = await snooze_reminder(db_session, reminder.id, new_time)
-        assert snoozed.trigger_at == new_time
-        assert snoozed.status == "active"
+        ok = await update_active_reminder(db_session, r.id, new_trigger_at=new_time)
+        assert ok is True
+
+        rows = await get_active_reminders(db_session, sample_group.group_id)
+        assert rows[0].trigger_at == new_time
+
+    @pytest.mark.asyncio
+    async def test_updates_message(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        r = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "old text", trigger,
+        )
+        ok = await update_active_reminder(db_session, r.id, new_message="new text")
+        assert ok is True
+
+        rows = await get_active_reminders(db_session, sample_group.group_id)
+        assert rows[0].message == "new text"
+
+    @pytest.mark.asyncio
+    async def test_skips_already_fired(self, db_session, sample_group):
+        """Cannot update a reminder that the cron has already fired."""
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        r = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "fired one", trigger,
+        )
+        await update_reminder_status(db_session, r.id, "fired")
+
+        new_time = trigger + timedelta(hours=2)
+        ok = await update_active_reminder(db_session, r.id, new_trigger_at=new_time)
+        assert ok is False
+        await db_session.refresh(r)
+        assert r.status == "fired"
+
+    @pytest.mark.asyncio
+    async def test_no_values_returns_false(self, db_session, sample_group):
+        trigger = datetime.now(timezone.utc) + timedelta(hours=1)
+        r = await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "x", trigger,
+        )
+        ok = await update_active_reminder(db_session, r.id)
+        assert ok is False

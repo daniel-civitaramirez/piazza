@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 import zoneinfo
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import dateparser
 import structlog
@@ -13,6 +12,7 @@ from dateutil.rrule import rrulestr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from piazza.core.encryption import set_decrypted
 from piazza.core.exceptions import NotFoundError, PastTimeError, ReminderError
 from piazza.db.models.group import Group
 from piazza.db.models.reminder import Reminder
@@ -96,21 +96,6 @@ def parse_time(raw_expression: str, tz: str = "UTC") -> datetime:
             "Try something like _tomorrow at 6am_ or _in 2 hours_."
         )
     return parsed
-
-
-def parse_snooze_duration(duration_str: str) -> timedelta:
-    """Parse a snooze duration like '1h', '30m', '2h30m'."""
-    pattern = r"(?:(\d+)\s*h(?:ours?)?)?[\s,]*(?:(\d+)\s*m(?:in(?:utes?)?)?)?$"
-    match = re.match(pattern, duration_str.strip(), re.IGNORECASE)
-    if not match or (not match.group(1) and not match.group(2)):
-        raise ReminderError(
-            f"Couldn't parse duration: _{duration_str}_. Try _1h_ or _30m_."
-        )
-    hours = int(match.group(1) or 0)
-    minutes = int(match.group(2) or 0)
-    if hours == 0 and minutes == 0:
-        raise ReminderError("Snooze duration must be at least 1 minute.")
-    return timedelta(hours=hours, minutes=minutes)
 
 
 # ---------- Async service functions ----------
@@ -203,47 +188,63 @@ async def cancel_by_message(
     return reminder
 
 
-async def snooze(
-    session: AsyncSession, reminder_id: uuid.UUID, duration_str: str
-) -> Reminder:
-    """Snooze a reminder by a duration string."""
-    delta = parse_snooze_duration(duration_str)
-    now = datetime.now(timezone.utc)
-    new_trigger = now + delta
-    reminder = await reminder_repo.snooze_reminder(session, reminder_id, new_trigger)
+async def update_reminder(
+    session: AsyncSession,
+    group_id: uuid.UUID,
+    *,
+    item_number: int | None = None,
+    query: str | None = None,
+    datetime_raw: str | None = None,
+    new_description: str | None = None,
+    tz: str = "UTC",
+) -> Reminder | list[Reminder]:
+    """Update an active reminder's time and/or text.
+
+    Identification: `item_number` (1-indexed) or `query` (fuzzy match).
+    Returns the updated Reminder, or list[Reminder] for ambiguous queries.
+    Raises NotFoundError, PastTimeError, or ReminderError("nothing_to_update").
+    """
+    if not datetime_raw and not new_description:
+        raise ReminderError("nothing_to_update")
+
+    if item_number is not None:
+        reminders = await reminder_repo.get_active_reminders(session, group_id)
+        if item_number < 1 or item_number > len(reminders):
+            raise NotFoundError("reminder", number=item_number, total=len(reminders))
+        reminder = reminders[item_number - 1]
+    elif query is not None:
+        matches = await reminder_repo.find_active_reminders_by_message(
+            session, group_id, query
+        )
+        if not matches:
+            raise NotFoundError("reminder", query=query)
+        if len(matches) > 1:
+            return matches[:5]
+        reminder = matches[0]
+    else:
+        raise ReminderError("missing_identifier")
+
+    new_trigger: datetime | None = None
+    if datetime_raw:
+        new_trigger = parse_time(datetime_raw, tz)
+        if new_trigger <= datetime.now(timezone.utc):
+            raise PastTimeError(f"_{datetime_raw}_ is already in the past.")
+
+    if not await reminder_repo.update_active_reminder(
+        session, reminder.id,
+        new_trigger_at=new_trigger,
+        new_message=new_description,
+    ):
+        # Lost the race — cron fired or another caller cancelled it.
+        raise NotFoundError("reminder")
+
+    if new_trigger is not None:
+        reminder.trigger_at = new_trigger
+    if new_description is not None:
+        set_decrypted(reminder, "message", new_description)
+
     await session.commit()
     return reminder
-
-
-async def snooze_by_number(
-    session: AsyncSession, group_id: uuid.UUID, number: int, duration_str: str
-) -> Reminder:
-    """Snooze the Nth active reminder. Raises NotFoundError."""
-    reminders = await reminder_repo.get_active_reminders(session, group_id)
-    if number < 1 or number > len(reminders):
-        raise NotFoundError("reminder", number=number, total=len(reminders))
-
-    reminder = reminders[number - 1]
-    return await snooze(session, reminder.id, duration_str)
-
-
-async def snooze_by_message(
-    session: AsyncSession, group_id: uuid.UUID, query: str, duration_str: str
-) -> Reminder | list[Reminder]:
-    """Snooze a reminder by matching its message text.
-
-    Returns single Reminder on success, or list[Reminder] for ambiguous matches.
-    Raises NotFoundError when no matches.
-    """
-    matches = await reminder_repo.find_active_reminders_by_message(
-        session, group_id, query
-    )
-    if not matches:
-        raise NotFoundError("reminder", query=query)
-    if len(matches) > 1:
-        return matches[:5]
-
-    return await snooze(session, matches[0].id, duration_str)
 
 
 async def set_group_timezone(

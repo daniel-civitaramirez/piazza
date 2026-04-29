@@ -142,42 +142,39 @@ async def handle_reminder_cancel(
     return error_response(Reason.MISSING_IDENTIFIER, entity=Entity.REMINDER)
 
 
-async def handle_reminder_snooze(
+async def handle_reminder_update(
     session: AsyncSession, group_id: uuid.UUID, sender_id: uuid.UUID, entities: Entities
 ) -> dict:
-    """Snooze a reminder by number or message text, with a duration."""
-    duration = entities.datetime_raw
-    if not duration:
-        return error_response(Reason.MISSING_DURATION)
+    """Update a reminder's time and/or text. Identify by number or matching text."""
+    if entities.item_number is None and not entities.description:
+        return error_response(Reason.MISSING_IDENTIFIER, entity=Entity.REMINDER)
+    if not entities.datetime_raw and not entities.new_description:
+        return error_response(Reason.NOTHING_TO_UPDATE)
 
+    tz = await _get_group_tz(session, group_id)
     try:
-        if entities.item_number is not None:
-            reminder = await service.snooze_by_number(
-                session, group_id, entities.item_number, duration
-            )
-            return ok_response(
-                Action.SNOOZE_REMINDER,
-                message=reminder.message,
-                trigger_at=reminder.trigger_at.isoformat(),
-            )
-
-        if entities.description:
-            result = await service.snooze_by_message(
-                session, group_id, entities.description, duration
-            )
-            if isinstance(result, list):
-                return _ambiguous_response(result)
-            return ok_response(
-                Action.SNOOZE_REMINDER,
-                message=result.message,
-                trigger_at=result.trigger_at.isoformat(),
-            )
+        result = await service.update_reminder(
+            session, group_id,
+            item_number=entities.item_number,
+            query=entities.description,
+            datetime_raw=entities.datetime_raw,
+            new_description=entities.new_description,
+            tz=tz,
+        )
     except NotFoundError as exc:
         return _not_found_from_exc(exc)
+    except PastTimeError:
+        return error_response(Reason.TIME_IN_PAST, raw=entities.datetime_raw or "")
     except ReminderError:
-        return error_response(Reason.UNPARSEABLE_DURATION, raw=duration)
+        return error_response(Reason.UNPARSEABLE_TIME, raw=entities.datetime_raw or "")
 
-    return error_response(Reason.MISSING_IDENTIFIER, entity=Entity.REMINDER)
+    if isinstance(result, list):
+        return _ambiguous_response(result)
+    return ok_response(
+        Action.UPDATE_REMINDER,
+        message=result.message,
+        trigger_at=result.trigger_at.isoformat(),
+    )
 
 
 async def handle_set_timezone(

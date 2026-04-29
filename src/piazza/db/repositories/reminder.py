@@ -123,19 +123,33 @@ async def cancel_reminder(
     return reminder
 
 
-async def snooze_reminder(
-    session: AsyncSession, reminder_id: uuid.UUID, new_trigger_at: datetime
-) -> Reminder:
-    """Snooze a reminder to a new time."""
+async def update_active_reminder(
+    session: AsyncSession,
+    reminder_id: uuid.UUID,
+    *,
+    new_trigger_at: datetime | None = None,
+    new_message: str | None = None,
+) -> bool:
+    """Update an active reminder's trigger_at and/or message. Returns True on success.
+
+    Guarded by status='active'; ignores fired/cancelled rows so an update
+    can't accidentally resurrect them.
+    """
+    values: dict = {}
+    if new_trigger_at is not None:
+        values["trigger_at"] = new_trigger_at
+    if new_message is not None:
+        values["message"] = encrypt(new_message, _key())
+    if not values:
+        return False
+
     result = await session.execute(
-        select(Reminder).where(Reminder.id == reminder_id)
+        update(Reminder)
+        .where(Reminder.id == reminder_id, Reminder.status == "active")
+        .values(**values)
     )
-    reminder = result.scalar_one()
-    reminder.trigger_at = new_trigger_at
-    reminder.status = "active"
     await session.flush()
-    set_decrypted(reminder, "message", decrypt(reminder.message, _key()))
-    return reminder
+    return result.rowcount > 0
 
 
 async def update_reminder_status(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -166,60 +166,52 @@ class TestHandleReminderCancel:
         assert result["reason"] == "missing_identifier"
 
 
-class TestHandleReminderSnooze:
+class TestHandleReminderUpdate:
     @pytest.mark.asyncio
-    async def test_snooze_by_number(self, db_session, sample_group):
-        """Snooze using item_number + datetime_raw."""
-        trigger1 = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
-        trigger2 = datetime(2030, 6, 1, 12, 0, tzinfo=timezone.utc)
+    async def test_update_time_by_number(self, db_session, sample_group):
+        future = datetime.now(timezone.utc) + timedelta(days=10)
         await create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
-            "first reminder", trigger1,
-        )
-        await create_reminder(
-            db_session, sample_group.group_id, sample_group.alice.id,
-            "second reminder", trigger2,
+            "first reminder", future,
         )
         await db_session.flush()
 
-        entities = Entities(item_number=2, datetime_raw="1h")
-        result = await handler.handle_reminder_snooze(
+        entities = Entities(item_number=1, datetime_raw="in 1 hour")
+        result = await handler.handle_reminder_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert result["status"] == "ok"
-        assert result["action"] == "snooze_reminder"
-        assert "second reminder" in result["message"]
+        assert result["action"] == "update_reminder"
+        assert "first reminder" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_snooze_by_message_text(self, db_session, sample_group):
-        """Snooze using natural language description + datetime_raw."""
-        trigger = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
+    async def test_rename_by_message_text(self, db_session, sample_group):
+        future = datetime.now(timezone.utc) + timedelta(days=10)
         await create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
-            "dentist appointment", trigger,
+            "dentist appointment", future,
         )
         await db_session.flush()
 
-        entities = Entities(description="dentist", datetime_raw="30m")
-        result = await handler.handle_reminder_snooze(
+        entities = Entities(description="dentist", new_description="dental cleaning")
+        result = await handler.handle_reminder_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert result["status"] == "ok"
-        assert result["action"] == "snooze_reminder"
-        assert "dentist" in result["message"]
+        assert result["action"] == "update_reminder"
+        assert result["message"] == "dental cleaning"
 
     @pytest.mark.asyncio
-    async def test_snooze_invalid_number_returns_not_found(self, db_session, sample_group):
-        """Out-of-range number returns not_found dict."""
-        trigger = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
+    async def test_update_invalid_number_returns_not_found(self, db_session, sample_group):
+        future = datetime.now(timezone.utc) + timedelta(days=10)
         await create_reminder(
             db_session, sample_group.group_id, sample_group.alice.id,
-            "only one", trigger,
+            "only one", future,
         )
         await db_session.flush()
 
-        entities = Entities(item_number=5, datetime_raw="1h")
-        result = await handler.handle_reminder_snooze(
+        entities = Entities(item_number=5, datetime_raw="in 1 hour")
+        result = await handler.handle_reminder_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert result["status"] == "not_found"
@@ -228,40 +220,64 @@ class TestHandleReminderSnooze:
         assert result["total"] == 1
 
     @pytest.mark.asyncio
-    async def test_snooze_missing_duration_returns_error(self, db_session, sample_group):
-        """Number but no duration returns error."""
-        entities = Entities(item_number=2)
-        result = await handler.handle_reminder_snooze(
-            db_session, sample_group.group_id, sample_group.alice.id, entities
-        )
-        assert result["status"] == "error"
-        assert result["reason"] == "missing_duration"
-
-    @pytest.mark.asyncio
-    async def test_snooze_missing_identifier_returns_error(self, db_session, sample_group):
-        """Duration but no number or description returns error."""
-        entities = Entities(datetime_raw="1h")
-        result = await handler.handle_reminder_snooze(
+    async def test_missing_identifier_returns_error(self, db_session, sample_group):
+        entities = Entities(datetime_raw="in 1 hour")
+        result = await handler.handle_reminder_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert result["status"] == "error"
         assert result["reason"] == "missing_identifier"
 
     @pytest.mark.asyncio
-    async def test_snooze_no_active_reminders(self, db_session, sample_group):
-        """Snoozing when no active reminders exist returns not_found."""
-        entities = Entities(item_number=1, datetime_raw="1h")
-        result = await handler.handle_reminder_snooze(
+    async def test_nothing_to_update_returns_error(self, db_session, sample_group):
+        entities = Entities(item_number=1)
+        result = await handler.handle_reminder_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
-        assert result["status"] == "not_found"
-        assert result["entity"] == "reminder"
+        assert result["status"] == "error"
+        assert result["reason"] == "nothing_to_update"
 
     @pytest.mark.asyncio
-    async def test_snooze_by_message_no_match(self, db_session, sample_group):
-        """Snooze by message text with no match returns not_found."""
-        entities = Entities(description="nonexistent", datetime_raw="1h")
-        result = await handler.handle_reminder_snooze(
+    async def test_update_to_past_returns_time_in_past(self, db_session, sample_group):
+        future = datetime.now(timezone.utc) + timedelta(days=10)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "x", future,
+        )
+        await db_session.flush()
+
+        entities = Entities(item_number=1, datetime_raw="2020-01-01 12:00")
+        result = await handler.handle_reminder_update(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "error"
+        assert result["reason"] == "time_in_past"
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_returns_disambiguation(self, db_session, sample_group):
+        future = datetime.now(timezone.utc) + timedelta(days=10)
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "meeting with team", future,
+        )
+        await create_reminder(
+            db_session, sample_group.group_id, sample_group.alice.id,
+            "meeting with client", future + timedelta(hours=1),
+        )
+        await db_session.flush()
+
+        entities = Entities(description="meeting", datetime_raw="in 2 hours")
+        result = await handler.handle_reminder_update(
+            db_session, sample_group.group_id, sample_group.alice.id, entities
+        )
+        assert result["status"] == "ambiguous"
+        assert result["entity"] == "reminder"
+        assert len(result["matches"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_update_by_message_no_match(self, db_session, sample_group):
+        entities = Entities(description="nonexistent", datetime_raw="in 1 hour")
+        result = await handler.handle_reminder_update(
             db_session, sample_group.group_id, sample_group.alice.id, entities
         )
         assert result["status"] == "not_found"
