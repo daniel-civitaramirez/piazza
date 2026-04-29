@@ -159,7 +159,7 @@ class TestLockReleasedOnFailure:
     @pytest.mark.asyncio
     async def test_llm_timeout_releases_lock(self, redis_client, _stub_externals):
         """AgentTimeoutError inside process_message does not strand the lock."""
-        from piazza.agent.base import AgentTimeoutError
+        from piazza.agent import AgentTimeoutError
         from piazza.workers.jobs import process_message_job
 
         call_count = 0
@@ -168,7 +168,7 @@ class TestLockReleasedOnFailure:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise AgentTimeoutError("ollama 10s timeout")
+                raise AgentTimeoutError("agent 10s timeout")
             return "recovered"
 
         ctx = {"redis": redis_client}
@@ -184,7 +184,7 @@ class TestLockReleasedOnFailure:
     @pytest.mark.asyncio
     async def test_llm_unavailable_releases_lock(self, redis_client, _stub_externals):
         """AgentUnavailableError inside process_message does not strand the lock."""
-        from piazza.agent.base import AgentUnavailableError
+        from piazza.agent import AgentUnavailableError
         from piazza.workers.jobs import process_message_job
 
         call_count = 0
@@ -193,7 +193,7 @@ class TestLockReleasedOnFailure:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise AgentUnavailableError("ollama connection refused")
+                raise AgentUnavailableError("agent connection refused")
             return "recovered"
 
         ctx = {"redis": redis_client}

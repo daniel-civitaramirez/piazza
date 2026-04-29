@@ -11,14 +11,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  ollama:
-    image: ollama/ollama:latest
-    environment:
-      - OLLAMA_KEEP_ALIVE=-1
-    volumes:
-      - ollama_data:/root/.ollama
-    restart: unless-stopped
-
   evolution-postgres:
     image: postgres:17-alpine
     environment:
@@ -71,15 +63,14 @@ services:
       - SUPABASE_DB_URL=${SUPABASE_DB_URL}
       - REDIS_URL=redis://redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENSOURCE_AGENT_ENABLED
-      - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL
-      - OLLAMA_TIMEOUT
-      - CLAUDE_MODEL
-      - CLAUDE_TIMEOUT
-      - CLAUDE_MAX_TOKENS
+      - LLM_PROVIDER
+      - LLM_TIMEOUT
       - LLM_TEMPERATURE
+      - LLM_MAX_TOKENS
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL
+      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
+      - FIREWORKS_MODEL
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
       - INJECTION_PATTERNS_PATH=/app/config/injection_patterns.json
@@ -87,9 +78,6 @@ services:
       - SENTRY_DSN=${SENTRY_DSN}
       - SENTRY_TRACES_SAMPLE_RATE
       - DISCOVER_BOT_LID
-      - CIRCUIT_BREAKER_FAILURES
-      - CIRCUIT_BREAKER_WINDOW
-      - CIRCUIT_BREAKER_COOLDOWN
       - GROUP_RATE_LIMIT_PER_MINUTE
       - MAX_MESSAGE_LENGTH
       - DEFAULT_CURRENCY
@@ -117,7 +105,6 @@ services:
       start_period: 30s
     depends_on:
       - redis
-      - ollama
       - evolution-api
     restart: unless-stopped
 
@@ -134,15 +121,14 @@ services:
       - SUPABASE_DB_URL=${SUPABASE_DB_URL}
       - REDIS_URL=redis://redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENSOURCE_AGENT_ENABLED
-      - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL
-      - OLLAMA_TIMEOUT
-      - CLAUDE_MODEL
-      - CLAUDE_TIMEOUT
-      - CLAUDE_MAX_TOKENS
+      - LLM_PROVIDER
+      - LLM_TIMEOUT
       - LLM_TEMPERATURE
+      - LLM_MAX_TOKENS
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL
+      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
+      - FIREWORKS_MODEL
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
       - INJECTION_PATTERNS_PATH=/app/config/injection_patterns.json
@@ -150,9 +136,6 @@ services:
       - SENTRY_DSN=${SENTRY_DSN}
       - SENTRY_TRACES_SAMPLE_RATE
       - DISCOVER_BOT_LID
-      - CIRCUIT_BREAKER_FAILURES
-      - CIRCUIT_BREAKER_WINDOW
-      - CIRCUIT_BREAKER_COOLDOWN
       - GROUP_RATE_LIMIT_PER_MINUTE
       - MAX_MESSAGE_LENGTH
       - DEFAULT_CURRENCY
@@ -174,7 +157,6 @@ services:
       - hf_cache:/hf_cache
     depends_on:
       - redis
-      - ollama
     restart: unless-stopped
 
   caddy:
@@ -194,7 +176,6 @@ services:
 
 volumes:
   redis_data:
-  ollama_data:
   evolution_pg_data:
   evolution_data:
   caddy_data:

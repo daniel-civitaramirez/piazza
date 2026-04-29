@@ -21,7 +21,7 @@ uv run mypy src/piazza/
 uv run uvicorn piazza.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Local services (requires Docker)
-docker compose up -d                                       # redis + ollama only
+docker compose up -d                                       # redis only
 docker compose -f docker-compose.prod.yml up -d            # full stack with evolution-api + caddy
 
 # Migrations (ENCRYPTION_KEY must be set; some past migrations encrypt existing rows)
@@ -42,19 +42,18 @@ WhatsApp → Evolution API → /webhook (HMAC verify) → parse_webhook()
   → arq queue (Redis) → process_message_job
   → per-group rate limit (Redis) → per-group lock (Redis)
   → L1 regex sanitizer → L2 ML guard (llm-guard)
-  → _run_agent(): OpenSourceAgent (Ollama) → ClaudeAgent (fallback)
+  → _run_agent(): get_agent() — Claude or Fireworks per LLM_PROVIDER
   → tool execution → WhatsApp response
 ```
 
-### Two-tier LLM agents
+### Single-provider LLM agent
 
-Both tiers are full agents with tool use, not classifiers. They share `BaseAgent._execute()` for the tool loop and differ only in the LLM API call.
+One provider is selected at deploy time via `LLM_PROVIDER` (`"fireworks"` default, or `"claude"`). One `Agent` class (`agent/agent.py`) talks to both via the official `anthropic` Python SDK — Fireworks exposes an Anthropic-compatible endpoint at `https://api.fireworks.ai/inference`, so `client.messages.create(...)` is the same call shape for both. No fallback, no circuit breaker — a provider failure becomes `GENERIC_ERROR_RESPONSE`.
 
-- **OpenSourceAgent**: Ollama (default `qwen2.5:0.5b`, override via `OLLAMA_MODEL`), OpenAI-compatible format, 10s timeout.
-- **ClaudeAgent**: Anthropic (haiku-4-5), native format, 15s timeout.
-- **Fallback logic** lives in `workers/process_message.py:_run_agent()`, not in agent classes.
-- **Circuit breaker**: 3 Ollama failures in 120s trip a 600s cooldown.
-- **Disable Ollama tier entirely**: set `OPENSOURCE_AGENT_ENABLED=false` to skip straight to Claude (default `true`). Useful when Ollama is unavailable on a given host.
+- **Claude**: default Anthropic SDK base URL. Configured via `ANTHROPIC_API_KEY`, `CLAUDE_MODEL` (default `claude-haiku-4-5-20251001`).
+- **Fireworks**: Anthropic SDK pointed at `https://api.fireworks.ai/inference`. Configured via `FIREWORKS_API_KEY`, `FIREWORKS_MODEL` (default `accounts/fireworks/models/gpt-oss-20b`).
+- **Universal:** `LLM_TIMEOUT` (default 15s) bounds the request so a stalled upstream can't hold the per-group lock. `LLM_TEMPERATURE` (default 0). `LLM_MAX_TOKENS` (default 1024). `thinking={"type": "disabled"}` is sent on every call so reasoning models don't burn tokens on hidden thought.
+- Singleton lives in `agent/__init__.py::get_agent()`, called from `workers/process_message.py:_run_agent()`.
 
 ### Tool pattern (every tool follows this layering)
 
@@ -120,7 +119,7 @@ admin/             → operational notifications (admin/notify.py)
 
 ## Deployment
 
-Production runs `docker-compose.prod.yml` with 7 services: `redis`, `ollama`, `evolution-postgres`, `evolution-api`, `app`, `worker`, `caddy`. Caddy handles auto-TLS and reverse-proxies to `app:8000`. Image layout: `./src` is bind-mounted into `app` and `worker`, but `alembic/`, `pyproject.toml`, and `uv.lock` are COPYed at build time — that dictates which deploys need a rebuild.
+Production runs `docker-compose.prod.yml` with 6 services: `redis`, `evolution-postgres`, `evolution-api`, `app`, `worker`, `caddy`. Caddy handles auto-TLS and reverse-proxies to `app:8000`. Image layout: `./src` is bind-mounted into `app` and `worker`, but `alembic/`, `pyproject.toml`, and `uv.lock` are COPYed at build time — that dictates which deploys need a rebuild.
 
 VPS-specific runbook (SSH key, paths, Supabase project ID, the four deploy procedures by change type, post-deploy smoke tests, things to never do) lives in the gitignored `docs/mvp/piazza_config.md`. Read it before deploying.
 
@@ -132,11 +131,12 @@ VPS-specific runbook (SSH key, paths, Supabase project ID, the four deploy proce
 ### Required env vars
 
 - `SUPABASE_DB_URL` — asyncpg-prefixed Supavisor transaction-mode URL (port 6543, `?ssl=require`)
-- `ANTHROPIC_API_KEY`, `ENCRYPTION_KEY` (base64 32 bytes), `WEBHOOK_SECRET`, `REDIS_PASSWORD`
+- `ENCRYPTION_KEY` (base64 32 bytes), `WEBHOOK_SECRET`, `REDIS_PASSWORD`
 - `EVO_API_KEY`, `EVO_DB_PASSWORD`, `EVO_INSTANCE_NAME`, `BOT_JID`, `DOMAIN`
-- Optional: `ADMIN_JID` (empty ⇒ auto-approve all groups), `SENTRY_DSN`, `OPENEXCHANGERATES_KEY`, `OLLAMA_MODEL` (override `qwen2.5:0.5b`), `OPENSOURCE_AGENT_ENABLED` (`false` to skip Ollama tier)
+- LLM (one or both depending on `LLM_PROVIDER`): `ANTHROPIC_API_KEY` (when `LLM_PROVIDER=claude`, the default), `FIREWORKS_API_KEY` (when `LLM_PROVIDER=fireworks`)
+- Optional: `LLM_PROVIDER` (default `claude`), `FIREWORKS_MODEL`, `LLM_TIMEOUT`, `ADMIN_JID` (empty ⇒ auto-approve all groups), `SENTRY_DSN`, `OPENEXCHANGERATES_KEY`
 
-`EVO_API_URL`, `OLLAMA_URL`, `REDIS_URL`, `INJECTION_PATTERNS_PATH` are set by compose to container hostnames — do NOT put them in `.env`.
+`EVO_API_URL`, `REDIS_URL`, `INJECTION_PATTERNS_PATH` are set by compose to container hostnames — do NOT put them in `.env`.
 
 Files not in git that the running app needs: `config/injection_patterns.json` (L1/L2 regex patterns, scp'd out-of-band, mounted read-only into both `app` and `worker`); `docs/mvp/piazza_config.md` (deployment secrets and infra references).
 
@@ -144,7 +144,7 @@ Files not in git that the running app needs: `config/injection_patterns.json` (L
 
 `Group.approval_status` is `pending` | `approved`. When `ADMIN_JID` is unset, new groups auto-approve; otherwise flip them manually via SQL in Supabase.
 
-`GET /health` reports per-service status (DB, Redis, Ollama, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until Evolution API is QR-linked.
+`GET /health` reports per-service status (DB, Redis, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until Evolution API is QR-linked.
 
 `main.py` auto-initializes `sentry_sdk` when `SENTRY_DSN` is set. The `before_send` hook scrubs PII (message text, phone numbers, display names) from error reports.
 

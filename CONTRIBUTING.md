@@ -16,11 +16,13 @@ cd piazza
 uv sync --extra dev
 
 cp .env.example .env
-# Fill in: ANTHROPIC_API_KEY, ENCRYPTION_KEY, SUPABASE_DB_URL,
-#         WEBHOOK_SECRET, EVO_API_KEY, EVO_DB_PASSWORD,
-#         EVO_INSTANCE_NAME, BOT_JID, DOMAIN
+# Fill in: ENCRYPTION_KEY, SUPABASE_DB_URL, WEBHOOK_SECRET,
+#         EVO_API_KEY, EVO_DB_PASSWORD, EVO_INSTANCE_NAME, BOT_JID, DOMAIN
+# Plus the LLM provider you want:
+#   LLM_PROVIDER=fireworks (default) → set FIREWORKS_API_KEY (and optionally FIREWORKS_MODEL)
+#   LLM_PROVIDER=claude              → set ANTHROPIC_API_KEY
 
-docker compose up -d              # Redis + Ollama
+docker compose up -d              # Redis
 uv run alembic upgrade head       # ENCRYPTION_KEY must be set
 ```
 
@@ -116,7 +118,7 @@ docker compose -f docker-compose.prod.yml logs app worker --tail 50
 curl -fsS https://<DOMAIN>/health | jq
 ```
 
-`GET /health` reports per-service status (DB, Redis, Ollama, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until the Evolution API instance is linked via QR.
+`GET /health` reports per-service status (DB, Redis, Evolution API, WhatsApp auth). WhatsApp `not authenticated` is expected until the Evolution API instance is linked via QR.
 
 ## Conventions
 
