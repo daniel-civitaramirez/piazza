@@ -1,6 +1,6 @@
 """Tool definitions and executor.
 
-Tools are defined in Anthropic format (canonical). The OpenSourceAgent converts
+Tools are defined in Anthropic format (canonical). The FireworksAgent converts
 to OpenAI format internally. Each tool maps to an existing handler function.
 """
 

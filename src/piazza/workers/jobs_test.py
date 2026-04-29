@@ -168,7 +168,7 @@ class TestLockReleasedOnFailure:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise AgentTimeoutError("ollama 10s timeout")
+                raise AgentTimeoutError("agent 10s timeout")
             return "recovered"
 
         ctx = {"redis": redis_client}
@@ -193,7 +193,7 @@ class TestLockReleasedOnFailure:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise AgentUnavailableError("ollama connection refused")
+                raise AgentUnavailableError("agent connection refused")
             return "recovered"
 
         ctx = {"redis": redis_client}

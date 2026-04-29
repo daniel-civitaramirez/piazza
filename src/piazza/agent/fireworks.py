@@ -1,4 +1,4 @@
-"""Open-source LLM agent using Ollama's OpenAI-compatible API."""
+"""Fireworks.ai LLM agent using their OpenAI-compatible chat completions API."""
 
 from __future__ import annotations
 
@@ -52,17 +52,24 @@ def _parse_response(body: dict) -> LLMResponse:
     return LLMResponse(text=text, tool_calls=tool_calls, raw=raw_calls)
 
 
-class OpenSourceAgent(BaseAgent):
-    """Agent backed by a local Ollama instance."""
+class FireworksAgent(BaseAgent):
+    """Agent backed by Fireworks.ai's hosted OpenAI-compatible API."""
 
     def __init__(
-        self, url: str, model: str, timeout: float, temperature: float, context_limit: int,
+        self,
+        api_key: str,
+        model: str,
+        base_url: str,
+        timeout: float,
+        temperature: float,
+        context_limit: int,
     ):
         super().__init__(context_limit=context_limit)
-        self.url = f"{url.rstrip('/')}/v1/chat/completions"
+        self.url = f"{base_url.rstrip('/')}/chat/completions"
         self.model = model
         self.timeout = timeout
         self.temperature = temperature
+        self.headers = {"Authorization": f"Bearer {api_key}"}
 
     async def _generate(
         self,
@@ -113,21 +120,22 @@ class OpenSourceAgent(BaseAgent):
     async def _post(self, payload: dict) -> dict:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(self.url, json=payload)
+                resp = await client.post(self.url, json=payload, headers=self.headers)
                 resp.raise_for_status()
-                return resp.json()
+                data: dict = resp.json()
+                return data
         except httpx.TimeoutException as exc:
-            logger.warning("ollama_agent_timeout", timeout=self.timeout)
+            logger.warning("fireworks_agent_timeout", timeout=self.timeout)
             raise AgentTimeoutError(
-                f"Ollama timed out after {self.timeout}s"
+                f"Fireworks timed out after {self.timeout}s"
             ) from exc
         except httpx.ConnectError as exc:
-            logger.warning("ollama_agent_unavailable", url=self.url)
-            raise AgentUnavailableError("Cannot connect to Ollama") from exc
+            logger.warning("fireworks_agent_unavailable", url=self.url)
+            raise AgentUnavailableError("Cannot connect to Fireworks") from exc
         except httpx.HTTPStatusError as exc:
             logger.warning(
-                "ollama_agent_http_error", status=exc.response.status_code,
+                "fireworks_agent_http_error", status=exc.response.status_code,
             )
             raise AgentUnavailableError(
-                f"Ollama returned HTTP {exc.response.status_code}"
+                f"Fireworks returned HTTP {exc.response.status_code}"
             ) from exc

@@ -9,10 +9,10 @@ import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from piazza.agent import get_claude_agent, get_opensource_agent
+from piazza.agent import get_agent
 from piazza.agent.base import AgentTimeoutError, AgentUnavailableError
 from piazza.agent.context import AgentContext
-from piazza.config.settings import APPROVAL_APPROVED, settings
+from piazza.config.settings import APPROVAL_APPROVED
 from piazza.core.encryption import hash_phone
 from piazza.core.exceptions import (
     FLAGGED_RESPONSE,
@@ -31,9 +31,6 @@ from piazza.workers.security.guard import screen_for_injection
 from piazza.workers.security.sanitizer import sanitize_input
 
 logger = structlog.get_logger()
-
-CB_KEY = "circuit:agent:ollama:failures"
-CB_OPEN_KEY = "circuit:agent:ollama:open"
 
 
 # --- Private helpers ---
@@ -62,26 +59,6 @@ def _log_injection(
         user_hash=user_hash,
         risk_score=risk_score,
     )
-
-
-async def _circuit_is_open(redis: Redis | None) -> bool:
-    if redis is None:
-        return False
-    return await redis.exists(CB_OPEN_KEY) > 0
-
-
-async def _circuit_record_failure(redis: Redis) -> None:
-    now = time.time()
-    pipe = redis.pipeline()
-    pipe.zadd(CB_KEY, {str(now): now})
-    pipe.zremrangebyscore(CB_KEY, "-inf", now - settings.circuit_breaker_window)
-    pipe.zcard(CB_KEY)
-    results = await pipe.execute()
-    failure_count = results[2]
-
-    if failure_count >= settings.circuit_breaker_failures:
-        await redis.set(CB_OPEN_KEY, "1", ex=settings.circuit_breaker_cooldown)
-        logger.warning("agent_circuit_breaker_opened", failures=failure_count)
 
 
 async def _maybe_send_welcome(session: AsyncSession, group: Group) -> None:
@@ -113,20 +90,12 @@ async def _maybe_send_welcome(session: AsyncSession, group: Group) -> None:
     logger.info("welcome_sent", group_id=str(group.id))
 
 
-async def _run_agent(context: AgentContext, redis: Redis | None) -> str:
-    """Try open-source agent first, fall back to Claude on failure."""
-    if settings.opensource_agent_enabled and not await _circuit_is_open(redis):
-        try:
-            return await get_opensource_agent().run(context)
-        except (AgentTimeoutError, AgentUnavailableError) as exc:
-            logger.warning("opensource_agent_failed", error=str(exc))
-            if redis:
-                await _circuit_record_failure(redis)
-
+async def _run_agent(context: AgentContext) -> str:
+    """Run the configured agent and translate failures into a generic reply."""
     try:
-        return await get_claude_agent().run(context)
+        return await get_agent().run(context)
     except (AgentTimeoutError, AgentUnavailableError) as exc:
-        logger.exception("claude_agent_error", error=str(exc))
+        logger.exception("agent_error", error=str(exc))
         return GENERIC_ERROR_RESPONSE
     except Exception:
         logger.exception("agent_unexpected_error")
@@ -190,9 +159,9 @@ async def process_message(
             reply_to_id=message.reply_to_message_id,
         )
 
-        # 4. Run agent (open-source → Claude fallback)
+        # 4. Run agent
         logger.info("pipeline_calling_agent", group_id=str(group.id))
-        response = await _run_agent(context, redis)
+        response = await _run_agent(context)
 
     except Exception:
         logger.exception("pipeline_error")
