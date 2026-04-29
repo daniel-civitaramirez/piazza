@@ -28,6 +28,14 @@ class AgentContext:
     reply_context: MessageLog | None = None
 
 
+def _speaker_name(msg: MessageLog) -> str:
+    if msg.role == "assistant":
+        return "Piazza"
+    if msg.role == "user" and msg.member:
+        return msg.member.display_name
+    return "Unknown"
+
+
 def build_user_content(context: AgentContext) -> str:
     """Build the user message content with context tags for the agent LLM."""
     parts: list[str] = []
@@ -44,24 +52,25 @@ def build_user_content(context: AgentContext) -> str:
         )
 
     if context.recent_messages:
-        lines = []
-        for msg in context.recent_messages:
-            if msg.role == "user" and msg.member:
-                name = msg.member.display_name
-            elif msg.role == "assistant":
-                name = "Piazza"
-            else:
-                name = "Unknown"
-            lines.append(f"[{name}]: {msg.content}")
+        lines = [
+            f"[{_speaker_name(msg)}]: {msg.content}" for msg in context.recent_messages
+        ]
         parts.append(
             "<recent_context>\n" + "\n".join(lines) + "\n</recent_context>"
         )
 
     if context.reply_context:
+        name = _speaker_name(context.reply_context)
         parts.append(
-            f"<replying_to>\n{context.reply_context.content}\n</replying_to>"
+            "<replying_to_message>\n"
+            f"[{name}]: {context.reply_context.content}\n"
+            "</replying_to_message>"
         )
 
-    parts.append(f"<user_message>{context.text}</user_message>")
+    parts.append(
+        "<user_message>\n"
+        f"[{context.sender_name}]: {context.text}\n"
+        "</user_message>"
+    )
 
     return "\n".join(parts)
