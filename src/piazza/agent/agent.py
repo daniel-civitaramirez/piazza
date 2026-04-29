@@ -11,16 +11,11 @@ import structlog
 from piazza.agent.context import AgentContext, build_user_content
 from piazza.agent.prompts import AGENT_SYSTEM_PROMPT
 from piazza.config.settings import settings
+from piazza.core.exceptions import GENERIC_ERROR_RESPONSE
 from piazza.db.repositories import message_log as message_log_repo
 from piazza.tools.registry import AGENT_TOOLS, execute_tool
 
 logger = structlog.get_logger()
-
-UNKNOWN_FALLBACK = (
-    "I'm not sure how to help with that. "
-    "I can help with *expenses*, *reminders*, *notes*, and *itinerary* — "
-    "just ask!"
-)
 
 # Fireworks exposes an Anthropic-compatible endpoint here (no /v1 suffix).
 FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference"
@@ -54,79 +49,15 @@ class Agent:
         else:
             raise ValueError(f"unknown LLM_PROVIDER: {settings.llm_provider}")
 
-    async def run(self, context: AgentContext) -> str:
-        """Hydrate context and execute the agent loop."""
-        await self._hydrate(context)
-        return await self._execute(context)
-
-    async def _hydrate(self, context: AgentContext) -> None:
-        try:
-            context.recent_messages = await message_log_repo.get_recent(
-                context.session,
-                context.group_id,
-                limit=settings.conversation_context_limit,
-            )
-        except Exception:
-            logger.exception("failed_to_fetch_recent_messages")
-
-        if context.reply_to_id:
-            try:
-                context.reply_context = (
-                    await message_log_repo.get_by_wa_message_id(
-                        context.session, context.reply_to_id,
-                    )
-                )
-            except Exception:
-                logger.exception("failed_to_fetch_reply_context")
-
-    async def _execute(self, context: AgentContext) -> str:
-        start = time.monotonic()
-        user_content = build_user_content(context)
-        messages: list[dict] = [{"role": "user", "content": user_content}]
-
-        response = await self._call(messages, tools=AGENT_TOOLS)
-        text = next(
-            (b.text for b in response.content if b.type == "text"), None,
+    def _log(self, start: float, tools_called: list[str]) -> None:
+        elapsed = int((time.monotonic() - start) * 1000)
+        logger.info(
+            "agent_response",
+            provider=settings.llm_provider,
+            model=self.model,
+            tools_called=tools_called,
+            elapsed_ms=elapsed,
         )
-        tool_uses = [b for b in response.content if b.type == "tool_use"]
-
-        if not tool_uses:
-            self._log(start, [])
-            return text or UNKNOWN_FALLBACK
-
-        tool_results: list[dict] = []
-        tools_called: list[str] = []
-        for tu in tool_uses:
-            result = await execute_tool(
-                tu.name, tu.input,
-                context.session, context.group_id, context.member_id,
-            )
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tu.id,
-                "content": result.response_text,
-            })
-            tools_called.append(tu.name)
-
-        messages.extend([
-            {
-                "role": "assistant",
-                "content": [b.model_dump() for b in response.content],
-            },
-            {"role": "user", "content": tool_results},
-        ])
-
-        try:
-            final = await self._call(messages)
-            final_text = next(
-                (b.text for b in final.content if b.type == "text"), None,
-            )
-        except (AgentTimeoutError, AgentUnavailableError):
-            logger.warning("agent_followup_failed")
-            final_text = None
-
-        self._log(start, tools_called)
-        return final_text or UNKNOWN_FALLBACK
 
     async def _call(
         self,
@@ -161,12 +92,76 @@ class Agent:
             )
             raise AgentUnavailableError(f"LLM error: {exc}") from exc
 
-    def _log(self, start: float, tools_called: list[str]) -> None:
-        elapsed = int((time.monotonic() - start) * 1000)
-        logger.info(
-            "agent_response",
-            provider=settings.llm_provider,
-            model=self.model,
-            tools_called=tools_called,
-            elapsed_ms=elapsed,
+    async def _hydrate(self, context: AgentContext) -> None:
+        try:
+            context.recent_messages = await message_log_repo.get_recent(
+                context.session,
+                context.group_id,
+                limit=settings.conversation_context_limit,
+            )
+        except Exception:
+            logger.exception("failed_to_fetch_recent_messages")
+
+        if context.reply_to_id:
+            try:
+                context.reply_context = (
+                    await message_log_repo.get_by_wa_message_id(
+                        context.session, context.reply_to_id,
+                    )
+                )
+            except Exception:
+                logger.exception("failed_to_fetch_reply_context")
+
+    async def _execute(self, context: AgentContext) -> str:
+        start = time.monotonic()
+        user_content = build_user_content(context)
+        messages: list[dict] = [{"role": "user", "content": user_content}]
+
+        response = await self._call(messages, tools=AGENT_TOOLS)
+        text = next(
+            (b.text for b in response.content if b.type == "text"), None,
         )
+        tool_uses = [b for b in response.content if b.type == "tool_use"]
+
+        if not tool_uses:
+            self._log(start, [])
+            return text or GENERIC_ERROR_RESPONSE
+
+        tool_results: list[dict] = []
+        tools_called: list[str] = []
+        for tu in tool_uses:
+            result = await execute_tool(
+                tu.name, tu.input,
+                context.session, context.group_id, context.member_id,
+            )
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": result.response_text,
+            })
+            tools_called.append(tu.name)
+
+        messages.extend([
+            {
+                "role": "assistant",
+                "content": [b.model_dump() for b in response.content],
+            },
+            {"role": "user", "content": tool_results},
+        ])
+
+        try:
+            final = await self._call(messages)
+            final_text = next(
+                (b.text for b in final.content if b.type == "text"), None,
+            )
+        except (AgentTimeoutError, AgentUnavailableError):
+            logger.warning("agent_followup_failed")
+            final_text = None
+
+        self._log(start, tools_called)
+        return final_text or GENERIC_ERROR_RESPONSE
+
+    async def run(self, context: AgentContext) -> str:
+        """Hydrate context and execute the agent loop."""
+        await self._hydrate(context)
+        return await self._execute(context)
