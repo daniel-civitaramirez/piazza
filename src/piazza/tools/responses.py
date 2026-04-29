@@ -36,7 +36,7 @@ class Action:
     # Reminders
     SET_REMINDER = "set_reminder"
     CANCEL_REMINDER = "cancel_reminder"
-    SNOOZE_REMINDER = "snooze_reminder"
+    UPDATE_REMINDER = "update_reminder"
     SET_TIMEZONE = "set_timezone"
 
     # Notes
@@ -80,10 +80,9 @@ class Reason:
     # Reminders
     MISSING_DESCRIPTION = "missing_description"
     MISSING_TIME = "missing_time"
-    MISSING_DURATION = "missing_duration"
     UNPARSEABLE_TIME = "unparseable_time"
-    UNPARSEABLE_DURATION = "unparseable_duration"
     INVALID_TIMEZONE = "invalid_timezone"
+    TIME_IN_PAST = "time_in_past"
 
     # Itinerary
     MISSING_ITEMS = "missing_items"

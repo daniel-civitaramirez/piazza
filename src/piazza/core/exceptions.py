@@ -67,5 +67,9 @@ class ReminderError(PiazzaError):
     """Error in reminder processing."""
 
 
+class PastTimeError(ReminderError):
+    """Trigger time resolved to a moment in the past."""
+
+
 class WhatsAppSendError(PiazzaError):
     """WhatsApp message delivery failed after retries."""

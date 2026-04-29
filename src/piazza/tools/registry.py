@@ -45,7 +45,7 @@ from piazza.tools.reminders.handler import (
     handle_reminder_cancel,
     handle_reminder_list,
     handle_reminder_set,
-    handle_reminder_snooze,
+    handle_reminder_update,
     handle_set_timezone,
 )
 from piazza.tools.responses import Reason, error_response
@@ -319,8 +319,14 @@ AGENT_TOOLS: list[dict] = [
         },
     },
     {
-        "name": "snooze_reminder",
-        "description": "Snooze a reminder by its list number or by matching text.",
+        "name": "update_reminder",
+        "description": (
+            "Update a reminder's fire time and/or text."
+            " Identify by list number or by matching text."
+            " Provide datetime_raw for a new time (relative or absolute,"
+            " e.g. 'in 1 hour' or 'tomorrow 6am') and/or new_description"
+            " to rename."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -330,14 +336,20 @@ AGENT_TOOLS: list[dict] = [
                 },
                 "description": {
                     "type": "string",
-                    "description": "Text to match against the reminder message (e.g. 'dentist')",
+                    "description": "Text to match against the existing reminder message",
                 },
                 "datetime_raw": {
                     "type": "string",
-                    "description": "Snooze duration (e.g. '1h', '30m')",
+                    "description": (
+                        "New fire time, natural language"
+                        " (e.g. 'in 1 hour', 'tomorrow 6am')"
+                    ),
+                },
+                "new_description": {
+                    "type": "string",
+                    "description": "New reminder text (if renaming)",
                 },
             },
-            "required": ["datetime_raw"],
         },
     },
     {
@@ -600,7 +612,7 @@ TOOL_REGISTRY: dict[str, HandlerFunc] = {
     "set_reminder": handle_reminder_set,
     "list_reminders": handle_reminder_list,
     "cancel_reminder": handle_reminder_cancel,
-    "snooze_reminder": handle_reminder_snooze,
+    "update_reminder": handle_reminder_update,
     "add_itinerary": handle_itinerary_add,
     "show_itinerary": handle_itinerary_show,
     "remove_itinerary": handle_itinerary_remove,
