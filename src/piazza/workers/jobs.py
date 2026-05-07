@@ -156,7 +156,7 @@ async def process_message_job(ctx: dict, raw_message: dict) -> str:
     except Exception:
         logger.exception("message_log_error")
 
-    return {"status": "ok", "response_length": len(response)}
+    return response
 
 
 async def fire_reminders_job(ctx: dict) -> int:
